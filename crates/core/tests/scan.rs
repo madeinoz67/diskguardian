@@ -340,3 +340,53 @@ fn deletion_moves_to_trash_by_default() {
 fn dirs_home() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
 }
+
+#[test]
+fn forgetting_a_deleted_node_updates_every_ancestor() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).expect("mkdir");
+    fs::write(sub.join("payload.bin"), vec![3u8; 4 << 20]).expect("write");
+    fs::write(dir.path().join("keep.bin"), b"tiny").expect("write");
+
+    let mut tree = scan(dir.path(), &options()).expect("scan");
+    let before_root = tree.total_bytes();
+    let before_files = tree.file_count();
+
+    let payload = tree
+        .nodes
+        .iter()
+        .position(|n| n.name == "payload.bin")
+        .expect("payload");
+    let payload_bytes = tree.nodes[payload].total_bytes;
+    let sub_id = tree.nodes.iter().position(|n| n.name == "sub").expect("sub");
+
+    tree.forget(&[payload]);
+
+    assert!(
+        !tree.nodes[sub_id].children.contains(&payload),
+        "the deleted node must leave its parent"
+    );
+    assert_eq!(
+        tree.nodes[sub_id].total_bytes,
+        tree.nodes[sub_id].own_bytes,
+        "the directory keeps only its own blocks"
+    );
+    assert_eq!(
+        tree.total_bytes(),
+        before_root - payload_bytes,
+        "every ancestor must lose exactly the deleted bytes"
+    );
+    assert_eq!(tree.file_count(), before_files - 1);
+    assert_tree_arithmetic(&tree);
+}
+
+#[test]
+fn forgetting_the_scan_root_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("a.bin"), b"x").expect("write");
+    let mut tree = scan(dir.path(), &options()).expect("scan");
+    let before = tree.total_bytes();
+    tree.forget(&[tree.root]);
+    assert_eq!(tree.total_bytes(), before, "the root cannot be forgotten");
+}

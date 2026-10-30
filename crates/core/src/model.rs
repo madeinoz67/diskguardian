@@ -86,6 +86,47 @@ impl Tree {
         self.nodes[self.root].file_count
     }
 
+    /// Drop nodes from the tree after they have been deleted on disk, and recompute every
+    /// ancestor's totals. This is what lets a delete refresh the view without re-walking
+    /// the volume, which on a large disk is the difference between instant and minutes.
+    pub fn forget(&mut self, ids: &[NodeId]) {
+        let mut touched: Vec<NodeId> = Vec::new();
+
+        for &id in ids {
+            if id >= self.nodes.len() || id == self.root {
+                continue;
+            }
+            if let Some(parent) = self.nodes[id].parent {
+                self.nodes[parent].children.retain(|&child| child != id);
+                touched.push(parent);
+            }
+        }
+
+        for parent in touched {
+            self.recompute_from(parent);
+        }
+    }
+
+    /// Recompute one node's totals from its children, then walk up to the root.
+    fn recompute_from(&mut self, start: NodeId) {
+        let mut cursor = Some(start);
+        while let Some(id) = cursor {
+            let child_total: u64 = self.nodes[id]
+                .children
+                .iter()
+                .map(|&c| self.nodes[c].total_bytes)
+                .sum();
+            let child_files: u64 = self.nodes[id]
+                .children
+                .iter()
+                .map(|&c| self.nodes[c].file_count)
+                .sum();
+            self.nodes[id].total_bytes = self.nodes[id].own_bytes.saturating_add(child_total);
+            self.nodes[id].file_count = child_files;
+            cursor = self.nodes[id].parent;
+        }
+    }
+
     /// Walk from a node up to the scan root.
     #[must_use]
     pub fn ancestors(&self, id: NodeId) -> Vec<NodeId> {

@@ -313,24 +313,40 @@ function updateHoverLabel(arc: Arc | null): void {
   hoverLabel.innerHTML = `<strong>${node.name}</strong><span>${formatBytes(node.bytes)} · ${kind}</span>`
 }
 
-async function onDelete(): Promise<void> {
+async function onDelete(permanent: boolean): Promise<void> {
   if (state.collectedCount === 0) return
+
   const big = state.collectedTotal >= CONFIRM_THRESHOLD
-  if (big) {
-    const ok = window.confirm(
-      `Move ${formatBytes(state.collectedTotal)} to the Trash?\n\nYou can recover them from the Trash until it is emptied.`,
-    )
-    if (!ok) return
+  const verb = permanent ? 'Delete permanently' : 'Move to the Trash'
+  const warning = permanent
+    ? `${verb} ${formatBytes(state.collectedTotal)}?\n\nThis cannot be undone.`
+    : `${verb} ${formatBytes(state.collectedTotal)}?\n\nYou can recover them until the Trash is emptied.`
+
+  // Permanent deletion always asks; a small Trash run is reversible and does not.
+  if (permanent || big) {
+    if (!window.confirm(warning)) return
   }
 
+  const frame = state.stack[state.stack.length - 1]
+  const nodeId = frame?.nodeId ?? null
+
   try {
-    const report = await bridge.deleteCollected(state.scanId, false, big)
+    const report = await bridge.deleteCollected(state.scanId, nodeId, permanent, true)
+
+    // The backend pruned the tree and handed back a fresh view, so no rescan is needed.
+    if (frame) frame.view = report.view
+    sunburst.setView(report.view)
+    sunburst.setCollected([])
+    state.collectedTotal = 0
+    state.collectedCount = 0
+    state.collectedIds = []
+    updateCollector()
+    renderLegend()
+
+    const failed = report.failed > 0 ? `, ${report.failed} failed` : ''
     setStatus(
-      `Freed ${formatBytes(report.freed)} · ${report.removed} removed${
-        report.failed > 0 ? ` · ${report.failed} failed` : ''
-      }`,
+      `${permanent ? 'Deleted' : 'Moved to Trash'} ${formatBytes(report.freed)} · ${report.removed} item${report.removed === 1 ? '' : 's'}${failed}`,
     )
-    if (state.rootPath) await scanPath(state.rootPath)
   } catch (error) {
     setStatus(`Delete failed: ${String(error)}`)
   }
@@ -440,7 +456,9 @@ window.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowUp') up()
 })
 
-deleteButton.addEventListener('click', () => void onDelete())
+deleteButton.addEventListener('click', (event) => void onDelete(event.altKey))
+// Alt-click is the permanent path; the button's tooltip says so.
+deleteButton.title = 'Move to Trash · hold Option to delete permanently'
 
 const resizeObserver = new ResizeObserver(() => sunburst.resize())
 resizeObserver.observe(canvas)

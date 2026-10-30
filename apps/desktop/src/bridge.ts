@@ -52,15 +52,32 @@ export async function collect(scanId: string, nodeId: number, add: boolean): Pro
 
 export async function deleteCollected(
   scanId: string,
+  nodeId: number | null,
   permanent: boolean,
   confirmed: boolean,
 ): Promise<DeleteReport> {
   if (!isTauri) {
     const total = demoCollectorTotal()
+    const collected = [...demoCollected]
     demoCollected.clear()
-    return { freed: total, removed: 1, failed: 0, outcomes: [] }
+    // Drop the collected branches from the demo tree so the flower visibly shrinks.
+    for (const id of collected) {
+      for (const node of demoNodes) {
+        node.children = node.children.filter((child) => demoNodes[child]?.node_id !== id)
+      }
+    }
+    return {
+      freed: total,
+      removed: collected.length,
+      failed: 0,
+      mode: permanent ? 'permanent' : 'trash',
+      outcomes: [],
+      view: reroot(demoNodes, 0),
+      bytes: demoNodes[0]?.bytes ?? 0,
+      files: 0,
+    }
   }
-  return invoke<DeleteReport>('delete_collected', { scanId, permanent, confirmed })
+  return invoke<DeleteReport>('delete_collected', { scanId, nodeId, permanent, confirmed })
 }
 
 export async function reveal(scanId: string, nodeId: number): Promise<void> {

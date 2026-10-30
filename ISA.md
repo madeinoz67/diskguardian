@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 11/16
+progress: 12/17
 iteration: 1
 created: 2026-10-30
 ---
@@ -124,6 +124,16 @@ verified in the running app, so the claim stays open until it is.
 **Note:** true queue-jumping is not offered, because rayon already walks every branch of the
 root concurrently; the honest behaviour is "open on arrival", with no second walk.
 
+### C17 — Deleting refreshes the flower without re-walking the disk  `[x]`
+After a delete the backend prunes the deleted nodes from the tree, recomputes every
+ancestor's totals and returns a fresh view, so the petal disappears and the totals shrink
+immediately. The default action moves items to the macOS Trash; holding Option on the Delete
+button removes them permanently, which always asks first.
+**Probe:** `cargo test` on `Tree::forget` (deleted node leaves its parent, every ancestor
+loses exactly the deleted bytes, tree arithmetic still holds, the scan root cannot be
+forgotten) plus the existing Trash-recovery test.
+**Falsifier:** a delete that triggers a full rescan, or a parent whose total does not shrink.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -144,6 +154,8 @@ root concurrently; the honest behaviour is "open on arrival", with no second wal
 - **No `PathBuf` per node** (2026-10-30, measured). The first build stored an absolute path on every node; a scan of the home directory reached 2.7 GB of RSS and still had not finished. Paths are now reconstructed from the name chain by `Tree::path_of`, which is called a handful of times per user action instead of millions of times per scan. Same scan: 417 MB.
 - **Progressive paint, not lazy loading** (2026-10-30, principal asked whether to scan on demand). Lazy expansion cannot draw this product's first frame: a petal's width IS its subtree's total, so from one `readdir` every folder would render at near zero and a 50 GB folder would look identical to an empty one. Lazy also re-walks a subtree on every re-entry unless cached, which is a full scan with extra steps. The scan now emits each root child the moment its subtree finishes and the UI draws equal-width "measuring" petals that grow into place, so the total cost is unchanged and the perceived wait collapses to about a second.
 - **Walker benchmarked against `du`, not a target** (2026-10-30, `du -sh ~/Library` = 79.6 s vs our 87.9 s on 974,623 files). The walk is within 10% of the filesystem floor for that tree, so the original "10 seconds" C14 target was invented rather than measured. Remaining known headroom is a redundant per-directory `stat`, visible as double `du`'s kernel time.
+- **Delete prunes, it does not rescan** (2026-10-30). The first working version re-scanned the whole volume after every delete, which is minutes on a real disk and made the feature feel broken. `Tree::forget` now removes the deleted nodes, recomputes ancestors and re-projects the view, so the flower updates in the same frame.
+- **Trash by default, Option for permanent** (2026-10-30). The button moves to the Trash; holding Option deletes permanently and always confirms. Trash runs over 5 GB also confirm.
 - **Narrow deletion guard** (2026-10-30, from a failing test that was right). Protecting `/private` and `/usr` wholesale refused the user's own temp directory (through the `/tmp` symlink) and every Homebrew cache. The guard now names the system's own trees, and a second test pins the narrow behaviour so a future "fix" cannot re-widen it.
 
 ## Not yet specified

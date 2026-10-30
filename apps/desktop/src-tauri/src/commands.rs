@@ -49,7 +49,13 @@ pub struct DeleteReport {
     pub freed: u64,
     pub removed: u32,
     pub failed: u32,
+    pub mode: String,
     pub outcomes: Vec<DeleteOutcomeView>,
+    /// The view to render next, pruned of what was deleted. Refreshing this way avoids
+    /// re-walking the volume, which on a large disk takes minutes.
+    pub view: Vec<ViewNode>,
+    pub bytes: u64,
+    pub files: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -244,6 +250,7 @@ pub fn collected(state: State<'_, AppState>, scan_id: String) -> Result<CollectS
 pub fn delete_collected(
     state: State<'_, AppState>,
     scan_id: String,
+    node_id: Option<u64>,
     permanent: bool,
     confirmed: bool,
 ) -> Result<DeleteReport, String> {
@@ -262,10 +269,12 @@ pub fn delete_collected(
 
     let order = scan.collector.deletion_order(&scan.tree);
     let mut sizes: HashMap<PathBuf, u64> = HashMap::new();
+    let mut id_by_path: HashMap<PathBuf, usize> = HashMap::new();
     let mut paths: Vec<PathBuf> = Vec::with_capacity(order.len());
     for id in order {
         let path = scan.tree.path_of(id);
         sizes.insert(path.clone(), scan.tree.node(id).total_bytes);
+        id_by_path.insert(path.clone(), id);
         paths.push(path);
     }
 
@@ -284,12 +293,28 @@ pub fn delete_collected(
         .map(|o| sizes.get(&o.path).copied().unwrap_or(o.bytes))
         .sum();
 
+    // Prune what actually left the disk, then re-project the view. No rescan.
+    let deleted: Vec<usize> = outcome
+        .outcomes
+        .iter()
+        .filter(|o| o.ok)
+        .filter_map(|o| id_by_path.get(&o.path).copied())
+        .collect();
+    scan.tree.forget(&deleted);
     scan.collector.clear();
+
+    let view_root = node_id.map_or(scan.tree.root, |id| id as usize);
+    let view = if view_root < scan.tree.nodes.len() {
+        build_view(&scan.tree, view_root, &ViewOptions::default())
+    } else {
+        build_view(&scan.tree, scan.tree.root, &ViewOptions::default())
+    };
 
     Ok(DeleteReport {
         freed,
         removed: outcome.removed,
         failed: outcome.failed,
+        mode: if permanent { "permanent".to_string() } else { "trash".to_string() },
         outcomes: outcome
             .outcomes
             .into_iter()
@@ -300,6 +325,9 @@ pub fn delete_collected(
                 error: o.error,
             })
             .collect(),
+        bytes: scan.tree.total_bytes(),
+        files: scan.tree.file_count(),
+        view,
     })
 }
 

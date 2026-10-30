@@ -44,5 +44,9 @@ export interface DeleteReport {
   freed: number
   removed: number
   failed: number
+  mode: 'trash' | 'permanent'
   outcomes: { path: string; ok: boolean; bytes: number; error: string | null }[]
+  view: ViewNode[]
+  bytes: number
+  files: number
 }
