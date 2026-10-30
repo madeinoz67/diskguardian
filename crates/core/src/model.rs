@@ -86,18 +86,6 @@ impl Tree {
         self.nodes[self.root].file_count
     }
 
-    /// Rewire every child's `parent` pointer. Called once after a scan finishes,
-    /// because children are built before the parent exists.
-    pub fn link_parents(nodes: &mut [Node]) {
-        for i in 0..nodes.len() {
-            let children = std::mem::take(&mut nodes[i].children);
-            for &c in &children {
-                nodes[c].parent = Some(i);
-            }
-            nodes[i].children = children;
-        }
-    }
-
     /// Walk from a node up to the scan root.
     #[must_use]
     pub fn ancestors(&self, id: NodeId) -> Vec<NodeId> {

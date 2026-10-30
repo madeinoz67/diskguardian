@@ -7,12 +7,23 @@
 //!
 //! Directories are walked in parallel with rayon. Symlinks are never followed, so
 //! a symlink loop cannot hang a scan and a link costs only its own metadata.
+//!
+//! # Why the tree is built twice
+//!
+//! The first version returned a `Vec<Node>` per directory and merged each child's
+//! vector into its parent's, rewriting indices as it went. That copies every node
+//! once per ancestor level, so a deep tree pays depth-many copies of its whole
+//! node array. Measured: 51k files in 446 ms in one tree, but 972k files in 106 s
+//! in another. The fix is to walk into a nested [`Scanned`] tree first, where a
+//! child's descendants sit behind a pointer and are never re-copied, and then
+//! flatten that tree into the arena exactly once.
 
 use crate::model::{Node, NodeId, NodeKind, Tree};
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -43,72 +54,113 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<Tree, ScanError> {
     let builder = Builder {
         seen: Mutex::new(HashSet::new()),
         max_entries: opts.max_entries,
-        visited: Mutex::new(0u64),
+        visited: AtomicU64::new(0),
+        errors: AtomicU64::new(0),
     };
 
     let name = root_name(root);
-    let sub = if meta.is_dir() {
+    let scanned = if meta.is_dir() {
         builder.walk_dir(root, name)
     } else {
-        builder.walk_file(name, &meta)
+        builder.leaf(name, &meta)
     };
 
-    let mut nodes = sub.nodes;
-    Tree::link_parents(&mut nodes);
+    // One allocation for the arena: count first, then fill. Counting walks the
+    // in-memory tree only, so it costs no syscalls.
+    let mut nodes: Vec<Node> = Vec::with_capacity(count_nodes(&scanned));
+    let root_id = flatten(scanned, &mut nodes, None);
 
     Ok(Tree {
         nodes,
-        root: sub.root,
+        root: root_id,
         scanned_root: root.to_path_buf(),
         duration_ms: started.elapsed().as_millis() as u64,
-        errors: sub.errors,
+        errors: builder.errors.load(Ordering::Relaxed),
     })
 }
 
-struct Subtree {
-    nodes: Vec<Node>,
-    root: NodeId,
-    errors: u64,
+/// The nested form of the tree, used only during a scan.
+struct Scanned {
+    name: String,
+    kind: NodeKind,
+    own_bytes: u64,
+    total_bytes: u64,
+    file_count: u64,
+    partial: bool,
+    link_skipped: bool,
+    note: Option<String>,
+    children: Vec<Scanned>,
+}
+
+fn count_nodes(node: &Scanned) -> usize {
+    1 + node.children.iter().map(count_nodes).sum::<usize>()
+}
+
+/// Move the nested tree into the flat arena exactly once: pre-order, so a node's id
+/// is always allocated before its children's.
+fn flatten(scanned: Scanned, out: &mut Vec<Node>, parent: Option<NodeId>) -> NodeId {
+    let id = out.len();
+    let Scanned {
+        name,
+        kind,
+        own_bytes,
+        total_bytes,
+        file_count,
+        partial,
+        link_skipped,
+        note,
+        children,
+    } = scanned;
+
+    out.push(Node {
+        name,
+        kind,
+        own_bytes,
+        total_bytes,
+        file_count,
+        children: Vec::with_capacity(children.len()),
+        parent,
+        partial,
+        link_skipped,
+        note,
+    });
+
+    for child in children {
+        let child_id = flatten(child, out, Some(id));
+        out[id].children.push(child_id);
+    }
+    id
 }
 
 struct Builder {
     seen: Mutex<HashSet<(u64, u64)>>,
     max_entries: Option<u64>,
-    visited: Mutex<u64>,
+    visited: AtomicU64,
+    errors: AtomicU64,
 }
 
 impl Builder {
-    fn walk_dir(&self, path: &Path, name: String) -> Subtree {
-        let mut nodes: Vec<Node> = Vec::new();
-        let mut child_ids: Vec<NodeId> = Vec::new();
+    fn walk_dir(&self, path: &Path, name: String) -> Scanned {
+        let mut children: Vec<Scanned> = Vec::new();
         let mut own_bytes = 0u64;
-        let mut errors = 0u64;
         let mut partial = false;
 
         let read_dir = match fs::read_dir(path) {
             Ok(rd) => rd,
             Err(err) => {
-                let mut node = Node {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                // A directory we cannot enter still occupies blocks of its own.
+                let own_bytes = fs::symlink_metadata(path).map_or(0, |m| allocation(&m));
+                return Scanned {
                     name,
                     kind: NodeKind::Restricted,
-                    own_bytes: 0,
-                    total_bytes: 0,
+                    own_bytes,
+                    total_bytes: own_bytes,
                     file_count: 0,
-                    children: Vec::new(),
-                    parent: None,
                     partial: true,
                     link_skipped: false,
                     note: Some(err.to_string()),
-                };
-                // A directory we cannot enter still occupies blocks of its own.
-                if let Ok(meta) = fs::symlink_metadata(path) {
-                    node.own_bytes = allocation(&meta);
-                    node.total_bytes = node.own_bytes;
-                }
-                return Subtree {
-                    nodes: vec![node],
-                    root: 0,
-                    errors: 1,
+                    children: Vec::new(),
                 };
             }
         };
@@ -120,7 +172,7 @@ impl Builder {
             let entry = match entry {
                 Ok(e) => e,
                 Err(_) => {
-                    errors += 1;
+                    self.errors.fetch_add(1, Ordering::Relaxed);
                     partial = true;
                     continue;
                 }
@@ -129,37 +181,30 @@ impl Builder {
                 Ok(ft) if ft.is_dir() => dirs.push(entry),
                 Ok(_) => files.push(entry),
                 Err(_) => {
-                    errors += 1;
+                    self.errors.fetch_add(1, Ordering::Relaxed);
                     partial = true;
                 }
             }
         }
 
         // Deterministic order, so two scans of an unchanged tree agree.
-        dirs.sort_by_key(fs::DirEntry::file_name);
-        files.sort_by_key(fs::DirEntry::file_name);
+        //
+        // `sort_by_cached_key` rather than `sort_by_key`: the key is an owned OsString,
+        // and `sort_by_key` recomputes it on every comparison, so a directory with half a
+        // million entries allocates tens of millions of strings just to sort itself.
+        dirs.sort_by_cached_key(fs::DirEntry::file_name);
+        files.sort_by_cached_key(fs::DirEntry::file_name);
 
-        let subtrees: Vec<Subtree> = dirs
+        let subtrees: Vec<Scanned> = dirs
             .par_iter()
             .map(|entry| self.walk_dir(&entry.path(), entry_name(entry)))
             .collect();
 
         for sub in subtrees {
-            let offset = nodes.len();
-            errors += sub.errors;
-            if sub.nodes[sub.root].partial {
+            if sub.partial {
                 partial = true;
             }
-            nodes.extend(sub.nodes);
-            for node in &mut nodes[offset..] {
-                for child in &mut node.children {
-                    *child += offset;
-                }
-                if let Some(parent) = node.parent.as_mut() {
-                    *parent += offset;
-                }
-            }
-            child_ids.push(offset + sub.root);
+            children.push(sub);
         }
 
         for entry in &files {
@@ -168,19 +213,16 @@ impl Builder {
             let meta = match entry.metadata() {
                 Ok(m) => m,
                 Err(_) => {
-                    errors += 1;
+                    self.errors.fetch_add(1, Ordering::Relaxed);
                     partial = true;
                     continue;
                 }
             };
-            if self.at_limit() {
+            if !self.claim_entry() {
                 partial = true;
                 break;
             }
-            let sub = self.leaf_node(entry_name(entry), &meta);
-            let idx = nodes.len();
-            nodes.push(sub);
-            child_ids.push(idx);
+            children.push(self.leaf(entry_name(entry), &meta));
         }
 
         // The directory's own metadata blocks are real occupied space.
@@ -188,43 +230,24 @@ impl Builder {
             own_bytes += allocation(&meta);
         }
 
-        let child_total: u64 = child_ids.iter().map(|&c| nodes[c].total_bytes).sum();
-        let total_bytes = own_bytes.saturating_add(child_total);
+        let child_total: u64 = children.iter().map(|c| c.total_bytes).sum();
+        // Leaves count 1 each, so summing the children's counts is the whole subtree.
+        let file_count: u64 = children.iter().map(|c| c.file_count).sum();
 
-        // Leaves count 1 each, so summing the children's counts is the whole subtree:
-        // adding `direct_files` on top would count this directory's files twice.
-        let files_in_subtree: u64 = child_ids.iter().map(|&c| nodes[c].file_count).sum();
-
-        let idx = nodes.len();
-        nodes.push(Node {
+        Scanned {
             name,
             kind: NodeKind::Directory,
             own_bytes,
-            total_bytes,
-            file_count: files_in_subtree,
-            children: child_ids,
-            parent: None,
+            total_bytes: own_bytes.saturating_add(child_total),
+            file_count,
             partial,
             link_skipped: false,
             note: None,
-        });
-
-        Subtree {
-            nodes,
-            root: idx,
-            errors,
+            children,
         }
     }
 
-    fn walk_file(&self, name: String, meta: &fs::Metadata) -> Subtree {
-        Subtree {
-            nodes: vec![self.leaf_node(name, meta)],
-            root: 0,
-            errors: 0,
-        }
-    }
-
-    fn leaf_node(&self, name: String, meta: &fs::Metadata) -> Node {
+    fn leaf(&self, name: String, meta: &fs::Metadata) -> Scanned {
         let allocation = allocation(meta);
         let is_link = meta.file_type().is_symlink();
         let duplicated = is_multilink(meta) && !self.claim_inode(meta);
@@ -240,7 +263,7 @@ impl Builder {
             (allocation, None)
         };
 
-        Node {
+        Scanned {
             name,
             kind: if is_link {
                 NodeKind::Symlink
@@ -250,11 +273,10 @@ impl Builder {
             own_bytes,
             total_bytes: own_bytes,
             file_count: 1,
-            children: Vec::new(),
-            parent: None,
             partial: false,
             link_skipped: duplicated,
             note,
+            children: Vec::new(),
         }
     }
 
@@ -277,19 +299,12 @@ impl Builder {
         }
     }
 
-    fn at_limit(&self) -> bool {
+    /// False once the optional entry cap is reached.
+    fn claim_entry(&self) -> bool {
         let Some(limit) = self.max_entries else {
-            return false;
-        };
-        let mut visited = self
-            .visited
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *visited >= limit {
             return true;
-        }
-        *visited += 1;
-        false
+        };
+        self.visited.fetch_add(1, Ordering::Relaxed) < limit
     }
 }
 
