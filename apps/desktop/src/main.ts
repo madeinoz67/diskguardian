@@ -8,8 +8,6 @@ import type { ViewNode } from './types'
 import { applyBranch, advance, findChildByName, partialView, startBranches } from './partial'
 import type { PartialBranch } from './partial'
 
-const CONFIRM_THRESHOLD = 5 * 1024 ** 3
-
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id)
   if (!node) throw new Error(`missing #${id}`)
@@ -90,6 +88,7 @@ const state = {
   collectedTotal: 0,
   collectedCount: 0,
   collectedIds: [] as number[],
+  needsConfirmation: false,
 }
 
 function setStatus(text: string): void {
@@ -275,6 +274,7 @@ async function toggleCollect(nodeId: number, add: boolean): Promise<void> {
     state.collectedTotal = result.total
     state.collectedCount = result.count
     state.collectedIds = result.ids
+    state.needsConfirmation = result.needs_confirmation
     sunburst.setCollected(result.ids)
     updateCollector()
     renderLegend()
@@ -316,14 +316,14 @@ function updateHoverLabel(arc: Arc | null): void {
 async function onDelete(permanent: boolean): Promise<void> {
   if (state.collectedCount === 0) return
 
-  const big = state.collectedTotal >= CONFIRM_THRESHOLD
   const verb = permanent ? 'Delete permanently' : 'Move to the Trash'
   const warning = permanent
     ? `${verb} ${formatBytes(state.collectedTotal)}?\n\nThis cannot be undone.`
     : `${verb} ${formatBytes(state.collectedTotal)}?\n\nYou can recover them until the Trash is emptied.`
 
-  // Permanent deletion always asks; a small Trash run is reversible and does not.
-  if (permanent || big) {
+  // Rust decides whether this needs confirming: a top-level folder asks whatever its size,
+  // and anything over the size bound asks. Permanent deletion always asks.
+  if (permanent || state.needsConfirmation) {
     if (!window.confirm(warning)) return
   }
 
@@ -340,6 +340,7 @@ async function onDelete(permanent: boolean): Promise<void> {
     state.collectedTotal = 0
     state.collectedCount = 0
     state.collectedIds = []
+    state.needsConfirmation = false
     updateCollector()
     renderLegend()
 

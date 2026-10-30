@@ -77,8 +77,13 @@ The collector's displayed total equals the sum of allocated bytes of the collect
 **Falsifier:** unit test on the collect set.
 
 ### C10 — Deletion is guarded  `[x]`
-Deletion refuses system trees (`/`, `/System`, `/usr/bin`, `/usr/lib`, `/bin`, `/sbin`, `/private/etc`, `/private/var/db`, `/Library/Apple`) and the scan root itself, while still allowing `/usr/local` and the temp directory, and requires an explicit confirmation before removing more than 5 GB.
-**Falsifier:** guard unit test that allows a protected path.
+Deletion refuses system trees (`/`, `/System`, `/usr/bin`, `/usr/lib`, `/bin`, `/sbin`, `/private/etc`, `/private/var/db`, `/Library/Apple`) and the scan root itself, while still allowing `/usr/local` and the temp directory, and requires an explicit confirmation when anything collected is a direct child of the scan root (whatever its size) or the total reaches 5 GB.
+**Falsifier:** guard unit test that allows a protected path, or a top-level folder deleted
+without asking.
+**Probe:** `cargo test` — `deletion_guard_refuses_protected_locations`,
+`confirmation_is_required_for_top_level_folders_whatever_their_size` (a 4 KB `Desktop` asks,
+a small nested folder does not, size alone still triggers). The verdict is computed in
+`delete.rs` and returned to the UI as `needs_confirmation`, so the frontend cannot forget it.
 
 ### C11 — Deletion is recoverable by default  `[x]`
 The default action moves collected items to the macOS Trash, and a file deleted that way is present in `~/.Trash` afterwards.

@@ -260,10 +260,15 @@ function demoView(nodeId: number | null): ViewNode[] {
 function demoCollect(nodeId: number, add: boolean): CollectState {
   if (add) demoCollected.add(nodeId)
   else demoCollected.delete(nodeId)
+  const names = [...demoCollected].map(
+    (id) => demoNodes.find((node) => node.node_id === id)?.name ?? '',
+  )
+  const topLevel = names.some((name) => DEMO.some((spec) => spec.name === name))
   return {
     total: demoCollectorTotal(),
     count: demoCollected.size,
     ids: [...demoCollected],
+    needs_confirmation: topLevel || demoCollectorTotal() >= 5 * GB,
   }
 }
 

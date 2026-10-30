@@ -42,6 +42,9 @@ pub struct CollectState {
     pub total: u64,
     pub count: usize,
     pub ids: Vec<u64>,
+    /// Computed here, not in the UI: a top-level folder asks for confirmation whatever its
+    /// size, and the frontend must not be the thing that decides that.
+    pub needs_confirmation: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -228,22 +231,25 @@ pub fn collect(
     } else {
         scan.collector.remove(node);
     }
-    Ok(CollectState {
-        total: scan.collector.total(&scan.tree),
+    Ok(collect_state(scan))
+}
+
+fn collect_state(scan: &crate::state::Scan) -> CollectState {
+    let total = scan.collector.total(&scan.tree);
+    let ids: Vec<usize> = scan.collector.deletion_order(&scan.tree);
+    CollectState {
+        total,
         count: scan.collector.len(),
         ids: scan.collector.ids().map(|id| id as u64).collect(),
-    })
+        needs_confirmation: diskguardian_core::delete::needs_confirmation(&scan.tree, ids, total),
+    }
 }
 
 #[tauri::command]
 pub fn collected(state: State<'_, AppState>, scan_id: String) -> Result<CollectState, String> {
     let scans = lock_scans(&state)?;
     let scan = scans.get(&scan_id).ok_or("unknown scan")?;
-    Ok(CollectState {
-        total: scan.collector.total(&scan.tree),
-        count: scan.collector.len(),
-        ids: scan.collector.ids().map(|id| id as u64).collect(),
-    })
+    Ok(collect_state(scan))
 }
 
 #[tauri::command]
@@ -261,13 +267,14 @@ pub fn delete_collected(
     if total == 0 {
         return Err("the collector is empty".to_string());
     }
-    if diskguardian_core::delete::requires_confirmation(total) && !confirmed {
+    let order = scan.collector.deletion_order(&scan.tree);
+    if diskguardian_core::delete::needs_confirmation(&scan.tree, order.clone(), total) && !confirmed
+    {
         return Err(format!(
-            "deleting {total} bytes needs explicit confirmation"
+            "deleting {total} bytes needs explicit confirmation (top-level folder or over the size bound)"
         ));
     }
 
-    let order = scan.collector.deletion_order(&scan.tree);
     let mut sizes: HashMap<PathBuf, u64> = HashMap::new();
     let mut id_by_path: HashMap<PathBuf, usize> = HashMap::new();
     let mut paths: Vec<PathBuf> = Vec::with_capacity(order.len());

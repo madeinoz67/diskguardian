@@ -25,6 +25,8 @@ export interface CollectState {
   total: number
   count: number
   ids: number[]
+  /** Decided by Rust: a top-level folder asks whatever its size. */
+  needs_confirmation: boolean
 }
 
 export interface BranchDone {

@@ -390,3 +390,35 @@ fn forgetting_the_scan_root_is_refused() {
     tree.forget(&[tree.root]);
     assert_eq!(tree.total_bytes(), before, "the root cannot be forgotten");
 }
+
+#[test]
+fn confirmation_is_required_for_top_level_folders_whatever_their_size() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let top = dir.path().join("Desktop");
+    fs::create_dir(&top).expect("mkdir");
+    fs::write(top.join("small.txt"), b"tiny").expect("write");
+    let nested = top.join("cache");
+    fs::create_dir(&nested).expect("mkdir");
+    fs::write(nested.join("x.bin"), b"x").expect("write");
+
+    let tree = scan(dir.path(), &options()).expect("scan");
+    let top_id = tree.nodes.iter().position(|n| n.name == "Desktop").expect("top");
+    let nested_id = tree.nodes.iter().position(|n| n.name == "cache").expect("nested");
+
+    // A small top-level folder still asks: it is a whole directory of the user's life.
+    assert!(
+        diskguardian_core::delete::needs_confirmation(&tree, [top_id], 4096),
+        "a top-level folder must confirm even at 4 KB"
+    );
+    // A small nested folder does not.
+    assert!(
+        !diskguardian_core::delete::needs_confirmation(&tree, [nested_id], 4096),
+        "a small nested folder should not nag"
+    );
+    // Size still triggers it on its own.
+    assert!(diskguardian_core::delete::needs_confirmation(
+        &tree,
+        [nested_id],
+        diskguardian_core::delete::CONFIRM_THRESHOLD_BYTES
+    ));
+}

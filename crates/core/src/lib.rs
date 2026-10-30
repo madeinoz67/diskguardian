@@ -17,7 +17,7 @@ pub mod scan;
 pub mod view;
 
 pub use collect::Collector;
-pub use delete::{delete, DeleteMode, DeleteOutcome, DeleteReport, GuardError};
+pub use delete::{delete, needs_confirmation, DeleteMode, DeleteOutcome, DeleteReport, GuardError};
 pub use model::{Node, NodeId, NodeKind, Tree};
 pub use scan::{scan, scan_with_progress, BranchDone, ProgressFn, ScanError, ScanOptions};
 pub use view::{build_view, ViewNode, ViewOptions};

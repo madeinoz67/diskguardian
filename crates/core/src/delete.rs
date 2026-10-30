@@ -7,6 +7,7 @@
 //! The guard is deliberately boring and deliberately absolute: system roots and the
 //! scanned volume's own root are refused, whatever the UI believes.
 
+use crate::model::{NodeId, Tree};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -100,6 +101,21 @@ pub fn guard(path: &Path, scan_root: &Path) -> Result<PathBuf, GuardError> {
 #[must_use]
 pub fn requires_confirmation(bytes: u64) -> bool {
     bytes >= CONFIRM_THRESHOLD_BYTES
+}
+
+/// Whether a deletion must be explicitly confirmed.
+///
+/// Two independent triggers, because size alone is the wrong test: a 200 MB `Desktop` is
+/// still a whole top-level folder, and losing it is not the same as losing a cache.
+///
+/// 1. the collected bytes reach [`CONFIRM_THRESHOLD_BYTES`], or
+/// 2. anything collected is a direct child of the scan root.
+#[must_use]
+pub fn needs_confirmation(tree: &Tree, ids: impl IntoIterator<Item = NodeId>, total: u64) -> bool {
+    requires_confirmation(total)
+        || ids
+            .into_iter()
+            .any(|id| tree.node(id).parent == Some(tree.root))
 }
 
 /// Delete each path, reporting per-item outcomes. Never panics on a bad path.
