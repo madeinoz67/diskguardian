@@ -69,7 +69,11 @@ fn lock_scans(
 
 #[tauri::command]
 pub fn home_dir() -> String {
-    std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+    // `DISKGUARDIAN_ROOT` exists so a developer (or a test harness) can point the app at a
+    // smaller tree without touching the default behaviour.
+    std::env::var("DISKGUARDIAN_ROOT")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| "/".to_string())
 }
 
 /// Mounted volumes, via `df`. Deliberately not a sysinfo dependency: one call, parsed
@@ -235,7 +239,7 @@ pub fn delete_collected(
     let mut sizes: HashMap<PathBuf, u64> = HashMap::new();
     let mut paths: Vec<PathBuf> = Vec::with_capacity(order.len());
     for id in order {
-        let path = scan.tree.node(id).path.clone();
+        let path = scan.tree.path_of(id);
         sizes.insert(path.clone(), scan.tree.node(id).total_bytes);
         paths.push(path);
     }
@@ -281,7 +285,7 @@ fn node_path(state: &AppState, scan_id: &str, node_id: u64) -> Result<PathBuf, S
     if node >= scan.tree.nodes.len() {
         return Err("node is not part of this scan".to_string());
     }
-    Ok(scan.tree.node(node).path.clone())
+    Ok(scan.tree.path_of(node))
 }
 
 #[tauri::command]

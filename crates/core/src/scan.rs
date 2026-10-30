@@ -50,7 +50,7 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<Tree, ScanError> {
     let sub = if meta.is_dir() {
         builder.walk_dir(root, name)
     } else {
-        builder.walk_file(root, name, &meta)
+        builder.walk_file(name, &meta)
     };
 
     let mut nodes = sub.nodes;
@@ -90,7 +90,6 @@ impl Builder {
             Err(err) => {
                 let mut node = Node {
                     name,
-                    path: path.to_path_buf(),
                     kind: NodeKind::Restricted,
                     own_bytes: 0,
                     total_bytes: 0,
@@ -178,7 +177,7 @@ impl Builder {
                 partial = true;
                 break;
             }
-            let sub = self.leaf_node(entry.path(), entry_name(entry), &meta);
+            let sub = self.leaf_node(entry_name(entry), &meta);
             let idx = nodes.len();
             nodes.push(sub);
             child_ids.push(idx);
@@ -199,7 +198,6 @@ impl Builder {
         let idx = nodes.len();
         nodes.push(Node {
             name,
-            path: path.to_path_buf(),
             kind: NodeKind::Directory,
             own_bytes,
             total_bytes,
@@ -218,15 +216,15 @@ impl Builder {
         }
     }
 
-    fn walk_file(&self, path: &Path, name: String, meta: &fs::Metadata) -> Subtree {
+    fn walk_file(&self, name: String, meta: &fs::Metadata) -> Subtree {
         Subtree {
-            nodes: vec![self.leaf_node(path.to_path_buf(), name, meta)],
+            nodes: vec![self.leaf_node(name, meta)],
             root: 0,
             errors: 0,
         }
     }
 
-    fn leaf_node(&self, path: PathBuf, name: String, meta: &fs::Metadata) -> Node {
+    fn leaf_node(&self, name: String, meta: &fs::Metadata) -> Node {
         let allocation = allocation(meta);
         let is_link = meta.file_type().is_symlink();
         let duplicated = is_multilink(meta) && !self.claim_inode(meta);
@@ -244,7 +242,6 @@ impl Builder {
 
         Node {
             name,
-            path,
             kind: if is_link {
                 NodeKind::Symlink
             } else {

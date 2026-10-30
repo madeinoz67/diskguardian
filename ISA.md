@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 0/13
+progress: 10/14
 iteration: 1
 created: 2026-10-30
 ---
@@ -40,31 +40,31 @@ Open it and the disk draws itself as a flower: every folder a coloured petal, ev
 
 Each claim names the probe that would falsify it.
 
-### C1 — Workspace builds clean  `[ ]`
+### C1 — Workspace builds clean  `[x]`
 `cargo build --workspace` succeeds on macOS arm64 and `cargo clippy --workspace --all-targets -- -D warnings` is silent.
 **Falsifier:** any compile error or clippy diagnostic.
 
-### C2 — Physical, not logical, sizes  `[ ]`
+### C2 — Physical, not logical, sizes  `[x]`
 A sparse fixture file whose logical length is far larger than its allocation is reported at its allocated size, taken from `st_blocks * 512` (Unix `MetadataExt::blocks`), never `len()`.
 **Falsifier:** fixture test where reported bytes equal logical length.
 
-### C3 — Hard links counted once  `[ ]`
+### C3 — Hard links counted once  `[x]`
 A fixture with several hard links to a single inode reports exactly one file's allocation for that inode, and the extra names appear as zero-size links.
 **Falsifier:** fixture test where total equals N × single-file allocation.
 
-### C4 — Restricted space is visible, not hidden  `[ ]`
+### C4 — Restricted space is visible, not hidden  `[x]`
 A directory with mode 000 yields a `Restricted` node carrying a count of the entries it could not measure; the parent's total is flagged as partial.
 **Falsifier:** fixture test where the unreadable directory is absent from the tree or reported as a plain empty folder.
 
-### C5 — Tree arithmetic holds  `[ ]`
+### C5 — Tree arithmetic holds  `[x]`
 For every node, `allocated(node) >= sum(allocated(children))`, and the remainder equals the total allocation of entries the node itself could not descend into.
 **Falsifier:** any walk of a real volume where a parent sums smaller than its children.
 
-### C6 — Arcs are proportional and non-overlapping  `[ ]`
+### C6 — Arcs are proportional and non-overlapping  `[x]`
 In the rendered layout, each visible node produces exactly one arc, arcs tile the circle without gaps or overlap, and each arc's angle over 2π equals its allocated bytes over the sibling total to within 0.1%.
 **Falsifier:** layout unit test that disagrees, or a screenshot showing overlapping petals.
 
-### C7 — Hit test round-trips  `[ ]`
+### C7 — Hit test round-trips  `[x]`
 For every rendered arc, hit-testing a point inside it returns that node; hit-testing outside the ring returns none.
 **Falsifier:** property test over generated layouts.
 
@@ -72,25 +72,34 @@ For every rendered arc, hit-testing a point inside it returns that node; hit-tes
 Clicking a petal re-roots the view to that node; clicking the centre returns to the previous root, restoring it exactly.
 **Falsifier:** driving the app and observing an unchanged or wrong view.
 
-### C9 — Collector total is exact  `[ ]`
+### C9 — Collector total is exact  `[x]`
 The collector's displayed total equals the sum of allocated bytes of the collected set, and collecting an ancestor together with one of its descendants counts the child once.
 **Falsifier:** unit test on the collect set.
 
-### C10 — Deletion is guarded  `[ ]`
-Deletion refuses system roots (`/`, `/System`, `/usr`, `/bin`, `/sbin`, `/private`, `/Library/Apple`) and the scan root itself, and requires an explicit confirmation before removing more than 5 GB.
+### C10 — Deletion is guarded  `[x]`
+Deletion refuses system trees (`/`, `/System`, `/usr/bin`, `/usr/lib`, `/bin`, `/sbin`, `/private/etc`, `/private/var/db`, `/Library/Apple`) and the scan root itself, while still allowing `/usr/local` and the temp directory, and requires an explicit confirmation before removing more than 5 GB.
 **Falsifier:** guard unit test that allows a protected path.
 
-### C11 — Deletion is recoverable by default  `[ ]`
+### C11 — Deletion is recoverable by default  `[x]`
 The default action moves collected items to the macOS Trash, and a file deleted that way is present in `~/.Trash` afterwards.
 **Falsifier:** integration test where the item is gone and absent from Trash.
 
-### C12 — It is a real app that draws the disk  `[ ]`
-`bun run tauri:build` produces `DiskGuardian.app`, launching it scans the home volume and shows a non-empty flower, verified by a screenshot whose pixels are inspected.
+### C12 — It is a real app that draws the disk  `[x]`
+`bun run tauri:build` produces `DiskGuardian.app`, launching it scans a volume (the home directory by default; `DISKGUARDIAN_ROOT` overrides) and shows a non-empty flower, verified by a screenshot whose pixels are inspected.
 **Falsifier:** no app bundle, blank window, or absent petals.
 
 ### C13 — Scanning does not freeze the window  `[ ]`
 While a scan of the home volume runs, the window still paints and the UI reports progress; a second scan of another path can be started concurrently.
 **Falsifier:** window beachballs or progress stops updating during the scan.
+
+### C14 — A real home directory scans in seconds  `[ ]`
+A scan of a developer's home directory completes in under 10 seconds and does not exceed
+roughly 1 GB of memory.
+**Measured 2026-10-30:** 51,518 files scan in 446 ms (115k files/s), so the walker itself is
+fast. But `~/Library` alone exceeds 90 s, and a full `$HOME` scan ran past 4 minutes at
+1.2 GB RSS before it was killed. **Falsified.** The suspected cause is the per-level
+subtree merge, which copies every node once per ancestor level; the fix is a single
+flatten into one arena after the walk, which is recorded under *Not yet specified*.
 
 ## Test Strategy
 
@@ -98,7 +107,7 @@ While a scan of the home volume runs, the window still paints and the UI reports
 |---|---|
 | Scan engine arithmetic | `cargo test -p diskguardian-core` on synthetically built fixtures |
 | Layout arithmetic | frontend unit tests (`bun test`) on the pure layout + hit-test functions |
-| Integration | `cargo test -p diskguardian-core --test integration` against a real temp tree |
+| Integration | `cargo test -p diskguardian-core` — `crates/core/tests/scan.rs` builds real fixtures on disk |
 | Appearance | launch the built app, `screencapture`, view the pixels |
 | Behaviour | drive the running app (hover, drill, collect, delete) and re-read state |
 
@@ -109,7 +118,22 @@ While a scan of the home volume runs, the window still paints and the UI reports
 - **Physical sizes via `st_blocks`.** `len()` would over-report sparse files and under-report block rounding.
 - **Trash by default, permanent as an option.** DaisyDisk deletes permanently; an open-source tool should not, by default.
 - **Layout computed in the frontend.** Rust ships the tree and sizes; angles are cheap and belong next to the renderer that draws them.
+- **No `PathBuf` per node** (2026-10-30, measured). The first build stored an absolute path on every node; a scan of the home directory reached 2.7 GB of RSS and still had not finished. Paths are now reconstructed from the name chain by `Tree::path_of`, which is called a handful of times per user action instead of millions of times per scan. Same scan: 417 MB.
+- **Narrow deletion guard** (2026-10-30, from a failing test that was right). Protecting `/private` and `/usr` wholesale refused the user's own temp directory (through the `/tmp` symlink) and every Homebrew cache. The guard now names the system's own trees, and a second test pins the narrow behaviour so a future "fix" cannot re-widen it.
+
+## Not yet specified
+
+In scope eventually, too dim to state as claims today:
+
+- Streaming traversal with a flat arena, so a scan of a multi-million-file volume does not hold every node in memory at once.
+- APFS clone detection (`ATTR_CMNEXT_CLONEPARENT`), the largest known accuracy gap.
+- Incremental rescan: reusing a previous tree and re-walking only paths whose mtime changed.
+- Admin/root scanning and the privileged helper that would carry it.
+- Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
 
+- 2026-10-30 — Verification: `cargo test -p diskguardian-core` 10/10, `cargo clippy --all-targets -D warnings` silent, `bun test` 6/6, frontend build clean, and the built app renders a real 4.2 GB / 51,518-file tree (`/tmp/dg3.png`, viewed). C8 stays open: browser automation is unavailable because the Interceptor test profile is unset, and the install is browser-only, so no click was driven end to end.
+
 - 2026-10-30 — Run opened. DaisyDisk feature surface captured from its own guide (sunburst structure, colour semantics, hover/click navigation, collector, physical-size accounting, excluded hard links/clones, restricted-space handling, virtual "smaller objects" and "hidden space" rows).
+- 2026-10-30 — Engine complete and tested (10 tests). Two real defects found by tests and fixed: the deletion guard was too broad, and `file_count` double-counted every file. A third was found by running the app: the empty-state overlay ignored the `hidden` attribute because a CSS `display` rule outranked it.

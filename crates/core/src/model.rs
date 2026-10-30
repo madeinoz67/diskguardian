@@ -32,10 +32,14 @@ impl NodeKind {
 /// for a directory, its own metadata blocks plus any entries that could not be
 /// turned into child nodes. `total_bytes` is `own_bytes` plus the totals of all
 /// children, so the tree never sums a parent smaller than its children.
+///
+/// Only the name is stored. A `PathBuf` per node duplicates the whole parent path on
+/// every entry, which on a home directory is gigabytes of repeated strings; paths are
+/// reconstructed on demand by [`Tree::path_of`], which is called a handful of times per
+/// user action rather than millions of times per scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub name: String,
-    pub path: PathBuf,
     pub kind: NodeKind,
     pub own_bytes: u64,
     pub total_bytes: u64,
@@ -104,5 +108,40 @@ impl Tree {
             cur = self.nodes[p].parent;
         }
         out
+    }
+
+    /// Rebuild an absolute path from the name chain. The root's own name is the last
+    /// component of `scanned_root`, so it is not re-appended.
+    #[must_use]
+    pub fn path_of(&self, id: NodeId) -> PathBuf {
+        if id == self.root {
+            return self.scanned_root.clone();
+        }
+        let mut names = Vec::new();
+        let mut cur = Some(id);
+        while let Some(node_id) = cur {
+            if node_id == self.root {
+                break;
+            }
+            names.push(self.nodes[node_id].name.as_str());
+            cur = self.nodes[node_id].parent;
+        }
+        let mut path = self.scanned_root.clone();
+        for name in names.iter().rev() {
+            path.push(name);
+        }
+        path
+    }
+
+    /// How many levels below the scan root this node sits.
+    #[must_use]
+    pub fn depth_of(&self, id: NodeId) -> usize {
+        let mut depth = 0;
+        let mut cur = self.nodes[id].parent;
+        while let Some(p) = cur {
+            depth += 1;
+            cur = self.nodes[p].parent;
+        }
+        depth
     }
 }

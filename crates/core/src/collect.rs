@@ -70,7 +70,7 @@ impl Collector {
             .copied()
             .filter(|&id| !self.has_collected_ancestor(tree, id))
             .collect();
-        ids.sort_by_key(|&id| std::cmp::Reverse(tree.node(id).path.components().count()));
+        ids.sort_by_key(|&id| std::cmp::Reverse(tree.depth_of(id)));
         ids
     }
 

@@ -255,6 +255,25 @@ fn view_merges_the_long_tail_into_smaller_objects() {
 }
 
 #[test]
+fn paths_are_reconstructed_from_the_name_chain() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let deep = dir.path().join("sub").join("deeper");
+    fs::create_dir_all(&deep).expect("mkdir");
+    fs::write(deep.join("payload.bin"), b"x").expect("write");
+
+    let tree = scan(dir.path(), &options()).expect("scan");
+    let id = tree
+        .nodes
+        .iter()
+        .position(|n| n.name == "payload.bin")
+        .expect("payload in tree");
+
+    assert_eq!(tree.path_of(id), deep.join("payload.bin"));
+    assert_eq!(tree.path_of(tree.root), dir.path());
+    assert_eq!(tree.depth_of(id), 3, "root → sub → deeper → file");
+}
+
+#[test]
 fn deletion_guard_refuses_protected_locations() {
     let scan_root = Path::new("/Users");
     for protected in [

@@ -16,6 +16,11 @@
   box-sizing: border-box;
 }
 
+/* `display` rules below would otherwise beat the `hidden` attribute. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
