@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { advance, applyBranch, NOMINAL, partialView, startBranches } from './partial'
+import { advance, applyBranch, findChildByName, NOMINAL, partialView, startBranches } from './partial'
 import { computeGeometry } from './layout'
 
 describe('progressive paint', () => {
@@ -52,5 +52,25 @@ describe('progressive paint', () => {
     const view = partialView('root', branches)
     const sum = view.slice(1).reduce((s, n) => s + n.bytes, 0)
     expect(view[0]?.bytes).toBe(sum)
+  })
+})
+
+describe('deferred drill', () => {
+  const view = [
+    { index: 0, node_id: 1, name: 'root', bytes: 10, kind: 'dir' as const, children: [1, 2], aggregated_count: 0, partial: false },
+    { index: 1, node_id: 7, name: 'Library', bytes: 6, kind: 'dir' as const, children: [], aggregated_count: 0, partial: false },
+    { index: 2, node_id: null, name: 'smaller objects', bytes: 4, kind: 'aggregate' as const, children: [], aggregated_count: 9, partial: false },
+  ]
+
+  test('resolves a measuring branch to its real node id', () => {
+    expect(findChildByName(view, 'Library')).toBe(7)
+  })
+
+  test('a synthetic child with no id is never a drill target', () => {
+    expect(findChildByName(view, 'smaller objects')).toBeNull()
+  })
+
+  test('an unknown name resolves to nothing rather than guessing', () => {
+    expect(findChildByName(view, 'Ghost')).toBeNull()
   })
 })

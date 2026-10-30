@@ -70,3 +70,18 @@ export function partialView(rootName: string, branches: PartialBranch[]): ViewNo
     })),
   ]
 }
+
+/**
+ * Find a child of the view root by name. Used to honour a click made while the petal was
+ * still "measuring": the branch has no id yet, so the drill is resolved by name once the
+ * real tree arrives.
+ */
+export function findChildByName(view: ViewNode[], name: string): number | null {
+  const root = view[0]
+  if (!root) return null
+  for (const index of root.children) {
+    const node = view[index]
+    if (node?.name === name && node.node_id !== null) return node.node_id
+  }
+  return null
+}

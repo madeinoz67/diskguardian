@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 11/15
+progress: 11/16
 iteration: 1
 created: 2026-10-30
 ---
@@ -111,6 +111,18 @@ the petals) plus `scan-progress` events emitted per branch from `crates/core/src
 **Falsifier:** first paint only after the scan resolves.
 **Open:** the in-window appearance of the growth was not captured this run, because browser
 automation is unavailable (see C8). The logic is tested; the animation is not photographed.
+
+### C16 — A click while measuring is honoured, not dropped  `[ ]`
+Clicking a petal before its branch has finished records the choice and opens that branch the
+moment its report lands, instead of doing nothing. Clicking elsewhere or Escape cancels, and
+the deferred choice is cleared at the start of every scan.
+**Probe:** `bun test` on `findChildByName` (a measuring branch resolves to a real node id, a
+synthetic "smaller objects" child never resolves, an unknown name returns nothing).
+**Falsifier:** a click during the measuring phase that discards the user's choice.
+**Status:** the name-resolution half is tested (13/13 pass). The end-to-end click is not yet
+verified in the running app, so the claim stays open until it is.
+**Note:** true queue-jumping is not offered, because rayon already walks every branch of the
+root concurrently; the honest behaviour is "open on arrival", with no second walk.
 
 ## Test Strategy
 

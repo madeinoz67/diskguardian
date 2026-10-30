@@ -5,7 +5,7 @@ import { assignHues, colorFor } from './layout'
 import type { Arc } from './layout'
 import { formatBytes, formatCount } from './format'
 import type { ViewNode } from './types'
-import { applyBranch, advance, partialView, startBranches } from './partial'
+import { applyBranch, advance, findChildByName, partialView, startBranches } from './partial'
 import type { PartialBranch } from './partial'
 
 const CONFIRM_THRESHOLD = 5 * 1024 ** 3
@@ -35,11 +35,16 @@ const sunburst = new Sunburst(canvas)
 // "measuring" petals and grow to their real width as the scanner reports each branch.
 
 let branches: PartialBranch[] | null = null
+// A branch clicked while it was still measuring. The scan walks every branch of the root
+// concurrently, so there is no queue to jump: the honest meaning of the click is "open
+// this as soon as its report lands".
+let pendingDrill: string | null = null
 let partialFrame = 0
 let partialRootName = ''
 
 function startPartial(names: string[], rootName: string): void {
   partialRootName = rootName
+  pendingDrill = null
   branches = startBranches(names)
   sunburst.setView(partialView(partialRootName, branches))
 }
@@ -113,6 +118,14 @@ async function scanPath(path: string): Promise<void> {
     renderCrumbs()
     renderLegend()
     updateCollector()
+
+    // Honour a click made while the petal was still measuring.
+    const wanted = pendingDrill
+    pendingDrill = null
+    if (wanted) {
+      const target = findChildByName(result.view, wanted)
+      if (target !== null) void navigate(target)
+    }
     const restrictedNote = result.partial ? ' · some items restricted' : ''
     setStatus(
       `${formatBytes(result.bytes)} · ${formatCount(result.files)} files · ${(
@@ -378,6 +391,14 @@ canvas.addEventListener('pointerup', (event) => {
 
   const arc = sunburst.arcAt(event.clientX, event.clientY)
   const node = sunburst.nodeAt(arc)
+
+  // Measuring phase: nothing has an id yet, so remember the choice and open it on arrival.
+  if (branches && node) {
+    pendingDrill = node.name
+    setStatus(`Opening ${node.name} as soon as it is measured…`)
+    return
+  }
+
   if (node?.node_id != null) void navigate(node.node_id)
 })
 
@@ -407,7 +428,14 @@ window.addEventListener('keydown', (event) => {
     return
   }
 
-  if (event.key === 'Escape') up()
+  if (event.key === 'Escape') {
+    if (pendingDrill) {
+      pendingDrill = null
+      setStatus('Cancelled')
+      return
+    }
+    up()
+  }
 
   if (event.key === 'ArrowUp') up()
 })
