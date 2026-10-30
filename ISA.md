@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 12/17
+progress: 12/18
 iteration: 1
 created: 2026-10-30
 ---
@@ -138,6 +138,18 @@ button removes them permanently, which always asks first.
 loses exactly the deleted bytes, tree arithmetic still holds, the scan root cannot be
 forgotten) plus the existing Trash-recovery test.
 **Falsifier:** a delete that triggers a full rescan, or a parent whose total does not shrink.
+
+### C18 — Collecting from the list actually works  `[ ]`
+Clicking the `+` beside a legend row adds that node to the collector: the collector amount
+rises, the row switches to a tick, the Delete button enables, and the petal is outlined.
+**Reported failing 2026-10-30 by the principal:** clicking `+` changed nothing.
+**Current probe:** the app now calls `collected` straight after every scan, so a miswired
+multi-argument command raises a visible banner instead of failing silently on first click;
+`showError` surfaces any collect failure in a dismissible red banner.
+**Falsifier:** a `+` click that leaves the collector at 0 bytes.
+**Suspected class:** every command that takes more than one argument (`collect`, `view`,
+`delete_collected`, `reveal`, `quicklook`) is unexercised; `scan` and `peek_root`, which take
+one or none, are known good. That points at the IPC argument binding, not the handler.
 
 ## Test Strategy
 

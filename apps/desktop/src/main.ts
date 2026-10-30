@@ -44,6 +44,13 @@ function startPartial(names: string[], rootName: string): void {
   partialRootName = rootName
   pendingDrill = null
   branches = startBranches(names)
+  // Nothing has an id yet, so nothing can be collected: say so rather than showing a
+  // dead button with no explanation.
+  collectAmount.textContent = '0 bytes'
+  collectCaption.textContent = 'measuring the disk · collecting opens when the scan finishes'
+  deleteButton.disabled = true
+  deleteButton.title = 'Wait for the scan to finish: items are collectable once they are measured'
+  sunburst.setView(partialView(partialRootName, branches))
   sunburst.setView(partialView(partialRootName, branches))
 }
 
@@ -287,12 +294,16 @@ function updateCollector(): void {
   collectAmount.textContent = formatBytes(state.collectedTotal)
   collectCaption.textContent =
     state.collectedCount === 0
-      ? 'in the collector · drag petals here'
+      ? 'drag a petal here, click + in the list, or hover a petal and press ⌫'
       : state.collectedCount === 1
         ? 'in the collector · 1 item'
         : `in the collector · ${state.collectedCount} items`
   collectValue.textContent = state.collectedTotal > 0 ? formatBytes(state.collectedTotal).split(' ')[0] ?? '0' : '0'
   deleteButton.disabled = state.collectedCount === 0
+  deleteButton.title =
+    state.collectedCount === 0
+      ? 'Collect something first: click + in the list, drag a petal here, or press ⌫ on a highlighted petal'
+      : 'Move to Trash · hold Option to delete permanently'
 }
 
 function updateHoverLabel(arc: Arc | null): void {

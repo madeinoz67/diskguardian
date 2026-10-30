@@ -45,6 +45,12 @@ export async function view(scanId: string, nodeId: number | null): Promise<ViewN
   return invoke<ViewNode[]>('view', { scanId, nodeId })
 }
 
+/** Read the collector without mutating it. Also the cheapest IPC probe after a scan. */
+export async function collected(scanId: string): Promise<CollectState> {
+  if (!isTauri) return { total: 0, count: 0, ids: [], needs_confirmation: false }
+  return invoke<CollectState>('collected', { scanId })
+}
+
 export async function collect(scanId: string, nodeId: number, add: boolean): Promise<CollectState> {
   if (!isTauri) return demoCollect(nodeId, add)
   return invoke<CollectState>('collect', { scanId, nodeId, add })
