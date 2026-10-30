@@ -11,6 +11,7 @@ pub fn run() {
             commands::home_dir,
             commands::volumes,
             commands::scan,
+            commands::peek_root,
             commands::view,
             commands::collect,
             commands::collected,

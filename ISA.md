@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 10/14
+progress: 11/15
 iteration: 1
 created: 2026-10-30
 ---
@@ -100,6 +100,17 @@ fast. But `~/Library` alone exceeds 90 s, and a full `$HOME` scan ran past 4 min
 1.2 GB RSS before it was killed. **Falsified.** The suspected cause is the per-level
 subtree merge, which copies every node once per ancestor level; the fix is a single
 flatten into one arena after the walk, which is recorded under *Not yet specified*.
+
+### C15 — Petals appear while the scan runs  `[x]`
+The flower is drawn from the root listing alone, with every branch shown as a "measuring"
+petal, and each petal grows to its true width the moment that branch's subtree is measured.
+Nothing waits for the last file.
+**Probe:** `bun test` on `apps/desktop/src/partial.ts` (equal nominal petals, a completed
+branch flipping to a folder at its real width, the root total always equal to the sum of
+the petals) plus `scan-progress` events emitted per branch from `crates/core/src/scan.rs`.
+**Falsifier:** first paint only after the scan resolves.
+**Open:** the in-window appearance of the growth was not captured this run, because browser
+automation is unavailable (see C8). The logic is tested; the animation is not photographed.
 
 ## Test Strategy
 

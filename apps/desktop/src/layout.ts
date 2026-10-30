@@ -127,6 +127,8 @@ export function colorFor(node: ViewNode, hue: number, depth: number): string {
       return 'hsl(276 68% 52%)'
     case 'aggregate':
       return 'hsl(220 8% 62% / 0.42)'
+    case 'measuring':
+      return 'hsl(220 8% 34%)'
     case 'file':
     case 'symlink':
       return `hsl(${hue} 10% ${58 + Math.min(depth, 4) * 3}%)`

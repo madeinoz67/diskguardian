@@ -3,7 +3,8 @@
 // same shape, so the sunburst can be looked at without a native window.
 
 import { invoke } from '@tauri-apps/api/core'
-import type { CollectState, DeleteReport, ScanResponse, ViewNode, VolumeInfo } from './types'
+import { listen } from '@tauri-apps/api/event'
+import type { BranchDone, CollectState, DeleteReport, ScanResponse, ViewNode, VolumeInfo } from './types'
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
@@ -17,6 +18,21 @@ export async function volumes(): Promise<VolumeInfo[]> {
     return [{ name: 'Macintosh HD', mount: '/', total_bytes: 994_662_584_320, free_bytes: 412_316_860_416 }]
   }
   return invoke<VolumeInfo[]>('volumes')
+}
+
+export async function peekRoot(path: string): Promise<string[]> {
+  if (!isTauri) return DEMO.map((spec) => spec.name).sort()
+  return invoke<string[]>('peek_root', { path })
+}
+
+/** Subscribe to per-branch progress. Returns an unsubscribe function. */
+export async function onScanProgress(handler: (branch: BranchDone) => void): Promise<() => void> {
+  if (!isTauri) {
+    demoListeners.add(handler)
+    return () => demoListeners.delete(handler)
+  }
+  const unlisten = await listen<BranchDone>('scan-progress', (event) => handler(event.payload))
+  return unlisten
 }
 
 export async function scan(path: string): Promise<ScanResponse> {
@@ -110,6 +126,11 @@ const DEMO: DemoSpec[] = [
 
 let demoNodes: ViewNode[] = []
 const demoCollected = new Set<number>()
+const demoListeners = new Set<(branch: BranchDone) => void>()
+
+function emitDemo(branch: BranchDone): void {
+  for (const listener of demoListeners) listener(branch)
+}
 
 function buildDemo(): ViewNode[] {
   const nodes: ViewNode[] = []
@@ -180,6 +201,11 @@ function buildDemo(): ViewNode[] {
 
 function demoScan(path: string): ScanResponse {
   demoNodes = buildDemo()
+  // Report branches the way the real scanner does: one at a time, out of size order.
+  const order = [...DEMO].sort((a, b) => a.size - b.size)
+  order.forEach((spec, i) => {
+    setTimeout(() => emitDemo({ name: spec.name, bytes: spec.size, files: Math.round(spec.size / 9000) }), 120 + i * 260)
+  })
   demoCollected.clear()
   const root = demoNodes[0]!
   return {

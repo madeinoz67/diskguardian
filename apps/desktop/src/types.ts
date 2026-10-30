@@ -3,7 +3,7 @@ export interface ViewNode {
   node_id: number | null
   name: string
   bytes: number
-  kind: 'dir' | 'file' | 'symlink' | 'restricted' | 'aggregate'
+  kind: 'dir' | 'file' | 'symlink' | 'restricted' | 'aggregate' | 'measuring'
   children: number[]
   aggregated_count: number
   partial: boolean
@@ -25,6 +25,12 @@ export interface CollectState {
   total: number
   count: number
   ids: number[]
+}
+
+export interface BranchDone {
+  name: string
+  bytes: number
+  files: number
 }
 
 export interface VolumeInfo {

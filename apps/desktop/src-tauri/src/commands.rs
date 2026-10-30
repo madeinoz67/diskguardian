@@ -7,12 +7,14 @@
 use crate::platform;
 use crate::state::AppState;
 use diskguardian_core::{
-    build_view, delete, scan as core_scan, DeleteMode, ViewNode, ViewOptions,
+    build_view, delete, scan_with_progress, BranchDone, DeleteMode, ProgressFn, ViewNode,
+    ViewOptions,
 };
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::path::{Path, PathBuf};
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Debug, Serialize)]
 pub struct VolumeInfo {
@@ -125,18 +127,41 @@ fn parse_df(text: &str) -> Vec<VolumeInfo> {
     volumes
 }
 
+/// The names of a directory's immediate children, so the UI can draw placeholder petals
+/// before any sizes are known. One `readdir`, no walking.
 #[tauri::command]
-pub async fn scan(state: State<'_, AppState>, path: String) -> Result<ScanResponse, String> {
+pub fn peek_root(path: String) -> Vec<String> {
+    let Ok(read_dir) = std::fs::read_dir(&path) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = read_dir
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[tauri::command]
+pub async fn scan(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<ScanResponse, String> {
     let root = PathBuf::from(&path);
     if !root.exists() {
         return Err(format!("{path} does not exist"));
     }
 
+    // Each branch is emitted the moment its subtree is measured, so the flower grows
+    // instead of appearing at the end.
+    let handle = app.clone();
+    let progress: ProgressFn = Arc::new(move |branch: BranchDone| {
+        let _ = handle.emit("scan-progress", &branch);
+    });
+
     let scanned = tauri::async_runtime::spawn_blocking(move || {
-        core_scan(
-            &root,
-            &diskguardian_core::ScanOptions::default(),
-        )
+        scan_with_progress(&root, &diskguardian_core::ScanOptions::default(), Some(progress))
     })
     .await
     .map_err(|e| format!("scan task failed: {e}"))?

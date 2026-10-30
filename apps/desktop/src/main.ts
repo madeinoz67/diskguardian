@@ -5,6 +5,8 @@ import { assignHues, colorFor } from './layout'
 import type { Arc } from './layout'
 import { formatBytes, formatCount } from './format'
 import type { ViewNode } from './types'
+import { applyBranch, advance, partialView, startBranches } from './partial'
+import type { PartialBranch } from './partial'
 
 const CONFIRM_THRESHOLD = 5 * 1024 ** 3
 
@@ -27,6 +29,50 @@ const hoverLabel = el<HTMLElement>('hover-label')
 
 const sunburst = new Sunburst(canvas)
 
+// ─── progressive paint ────────────────────────────────────────────────────────────────
+//
+// The pure half of this lives in partial.ts, where it is tested: petals start as equal
+// "measuring" petals and grow to their real width as the scanner reports each branch.
+
+let branches: PartialBranch[] | null = null
+let partialFrame = 0
+let partialRootName = ''
+
+function startPartial(names: string[], rootName: string): void {
+  partialRootName = rootName
+  branches = startBranches(names)
+  sunburst.setView(partialView(partialRootName, branches))
+}
+
+function updatePartial(name: string, bytes: number): void {
+  if (!branches) return
+  if (!applyBranch(branches, name, bytes)) return
+  setStatus(`Measuring… ${branches.filter((b) => b.done).length} of ${branches.length} done`)
+  animatePartial()
+}
+
+function animatePartial(): void {
+  if (partialFrame) return
+  const step = (): void => {
+    if (!branches) {
+      partialFrame = 0
+      return
+    }
+    const moving = advance(branches)
+    sunburst.setView(partialView(partialRootName, branches))
+    partialFrame = moving ? requestAnimationFrame(step) : 0
+  }
+  partialFrame = requestAnimationFrame(step)
+}
+
+function stopPartial(): void {
+  branches = null
+  if (partialFrame) {
+    cancelAnimationFrame(partialFrame)
+    partialFrame = 0
+  }
+}
+
 interface Frame {
   nodeId: number | null
   view: ViewNode[]
@@ -48,8 +94,14 @@ function setStatus(text: string): void {
 async function scanPath(path: string): Promise<void> {
   setStatus('Scanning…')
   document.body.classList.add('scanning')
+  let unsubscribe: (() => void) | null = null
   try {
+    const names = await bridge.peekRoot(path)
+    startPartial(names, path.split('/').filter(Boolean).pop() ?? path)
+    unsubscribe = await bridge.onScanProgress((branch) => updatePartial(branch.name, branch.bytes))
+
     const result = await bridge.scan(path)
+    stopPartial()
     state.scanId = result.scan_id
     state.rootPath = path
     state.stack = [{ nodeId: null, view: result.view }]
@@ -61,15 +113,17 @@ async function scanPath(path: string): Promise<void> {
     renderCrumbs()
     renderLegend()
     updateCollector()
-    const partial = result.partial ? ' · some items restricted' : ''
+    const restrictedNote = result.partial ? ' · some items restricted' : ''
     setStatus(
       `${formatBytes(result.bytes)} · ${formatCount(result.files)} files · ${(
         result.duration_ms / 1000
-      ).toFixed(1)}s${partial}`,
+      ).toFixed(1)}s${restrictedNote}`,
     )
   } catch (error) {
+    stopPartial()
     setStatus(`Scan failed: ${String(error)}`)
   } finally {
+    unsubscribe?.()
     document.body.classList.remove('scanning')
   }
 }

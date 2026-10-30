@@ -24,7 +24,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[derive(Debug, thiserror::Error)]
@@ -43,8 +43,29 @@ pub struct ScanOptions {
     pub max_entries: Option<u64>,
 }
 
+/// One finished child of the scan root, reported the moment it completes so a UI can
+/// draw it without waiting for the whole tree.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BranchDone {
+    pub name: String,
+    pub bytes: u64,
+    pub files: u64,
+}
+
+pub type ProgressFn = Arc<dyn Fn(BranchDone) + Send + Sync>;
+
 /// Scan `root` and return the whole tree. The root itself may be a file.
 pub fn scan(root: &Path, opts: &ScanOptions) -> Result<Tree, ScanError> {
+    scan_with_progress(root, opts, None)
+}
+
+/// As [`scan`], but reports every direct child of the root as soon as that child's
+/// subtree has been measured.
+pub fn scan_with_progress(
+    root: &Path,
+    opts: &ScanOptions,
+    progress: Option<ProgressFn>,
+) -> Result<Tree, ScanError> {
     let started = Instant::now();
     let meta = fs::symlink_metadata(root).map_err(|source| ScanError::Root {
         path: root.to_path_buf(),
@@ -56,11 +77,12 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<Tree, ScanError> {
         max_entries: opts.max_entries,
         visited: AtomicU64::new(0),
         errors: AtomicU64::new(0),
+        progress,
     };
 
     let name = root_name(root);
     let scanned = if meta.is_dir() {
-        builder.walk_dir(root, name)
+        builder.walk_dir(root, name, 0)
     } else {
         builder.leaf(name, &meta)
     };
@@ -137,10 +159,22 @@ struct Builder {
     max_entries: Option<u64>,
     visited: AtomicU64,
     errors: AtomicU64,
+    progress: Option<ProgressFn>,
 }
 
 impl Builder {
-    fn walk_dir(&self, path: &Path, name: String) -> Scanned {
+    /// Report a completed branch, but only for the root's own children.
+    fn report(&self, scanned: &Scanned) {
+        if let Some(progress) = &self.progress {
+            progress(BranchDone {
+                name: scanned.name.clone(),
+                bytes: scanned.total_bytes,
+                files: scanned.file_count,
+            });
+        }
+    }
+
+    fn walk_dir(&self, path: &Path, name: String, depth: usize) -> Scanned {
         let mut children: Vec<Scanned> = Vec::new();
         let mut own_bytes = 0u64;
         let mut partial = false;
@@ -195,9 +229,11 @@ impl Builder {
         dirs.sort_by_cached_key(fs::DirEntry::file_name);
         files.sort_by_cached_key(fs::DirEntry::file_name);
 
+        // The callback fires inside the closure, so a branch is reported the instant it
+        // finishes rather than when `collect` finally returns.
         let subtrees: Vec<Scanned> = dirs
             .par_iter()
-            .map(|entry| self.walk_dir(&entry.path(), entry_name(entry)))
+            .map(|entry| self.walk_dir(&entry.path(), entry_name(entry), depth + 1))
             .collect();
 
         for sub in subtrees {
@@ -222,7 +258,11 @@ impl Builder {
                 partial = true;
                 break;
             }
-            children.push(self.leaf(entry_name(entry), &meta));
+            let leaf = self.leaf(entry_name(entry), &meta);
+            if depth == 0 {
+                self.report(&leaf);
+            }
+            children.push(leaf);
         }
 
         // The directory's own metadata blocks are real occupied space.
@@ -234,7 +274,7 @@ impl Builder {
         // Leaves count 1 each, so summing the children's counts is the whole subtree.
         let file_count: u64 = children.iter().map(|c| c.file_count).sum();
 
-        Scanned {
+        let scanned = Scanned {
             name,
             kind: NodeKind::Directory,
             own_bytes,
@@ -244,7 +284,15 @@ impl Builder {
             link_skipped: false,
             note: None,
             children,
+        };
+
+        // Depth 1 is a direct child of the scan root: exactly the branches the first
+        // view draws.
+        if depth == 1 {
+            self.report(&scanned);
         }
+
+        scanned
     }
 
     fn leaf(&self, name: String, meta: &fs::Metadata) -> Scanned {
