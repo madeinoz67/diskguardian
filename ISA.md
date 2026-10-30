@@ -1,0 +1,115 @@
+---
+title: diskguardian
+principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
+phase: climbing
+progress: 0/13
+iteration: 1
+created: 2026-10-30
+---
+
+# diskguardian
+
+## Goal
+
+An open-source, cross-platform disk space visualiser written in Rust, with a graphical UI, macOS-first, whose look, feel and functionality match DaisyDisk.
+
+## Vision
+
+Open it and the disk draws itself as a flower: every folder a coloured petal, every file grey, petal width exactly the space it occupies. Click a petal and you fall into it, click the middle and you climb back out. Hover and the right-hand column tells you what you are looking at. Drag the big ones into a collector, watch the number climb, then delete once — and get the space back. No wizard, no categories, no sixty-step cleanup script. The user sees where the space went in one glance, and it costs them nothing but a download.
+
+## Out of Scope (v0.1)
+
+- Admin / root scanning. Core loop must work with user privileges only.
+- Cloud accounts: Dropbox, Google Drive, OneDrive, Box.
+- APFS local snapshot discovery and purge.
+- Disk image (.dmg) mounting and scanning.
+- Network volumes.
+- Windows and Linux builds. The code is written portable and cross-platform, but only macOS is tested and shipped at v0.1.
+- APFS clone detection (`ATTR_CMNEXT_CLONEPARENT`). Hard links are deduplicated; clones are not, yet.
+
+## Anti-claims (what must NOT be true)
+
+- **A1.** It must never delete anything the user did not explicitly put in the collector.
+- **A2.** It must never present logical file length where physical allocated size is the meaning.
+- **A3.** It must never silently drop unreadable directories from a total as if they were zero.
+- **A4.** The UI must never block during a scan; the window stays responsive at all times.
+- **A5.** The core loop must never require elevated privileges.
+- **A6.** It must never render an arc whose angular width is unrelated to its allocated size.
+
+## Claims (ideal state criteria)
+
+Each claim names the probe that would falsify it.
+
+### C1 — Workspace builds clean  `[ ]`
+`cargo build --workspace` succeeds on macOS arm64 and `cargo clippy --workspace --all-targets -- -D warnings` is silent.
+**Falsifier:** any compile error or clippy diagnostic.
+
+### C2 — Physical, not logical, sizes  `[ ]`
+A sparse fixture file whose logical length is far larger than its allocation is reported at its allocated size, taken from `st_blocks * 512` (Unix `MetadataExt::blocks`), never `len()`.
+**Falsifier:** fixture test where reported bytes equal logical length.
+
+### C3 — Hard links counted once  `[ ]`
+A fixture with several hard links to a single inode reports exactly one file's allocation for that inode, and the extra names appear as zero-size links.
+**Falsifier:** fixture test where total equals N × single-file allocation.
+
+### C4 — Restricted space is visible, not hidden  `[ ]`
+A directory with mode 000 yields a `Restricted` node carrying a count of the entries it could not measure; the parent's total is flagged as partial.
+**Falsifier:** fixture test where the unreadable directory is absent from the tree or reported as a plain empty folder.
+
+### C5 — Tree arithmetic holds  `[ ]`
+For every node, `allocated(node) >= sum(allocated(children))`, and the remainder equals the total allocation of entries the node itself could not descend into.
+**Falsifier:** any walk of a real volume where a parent sums smaller than its children.
+
+### C6 — Arcs are proportional and non-overlapping  `[ ]`
+In the rendered layout, each visible node produces exactly one arc, arcs tile the circle without gaps or overlap, and each arc's angle over 2π equals its allocated bytes over the sibling total to within 0.1%.
+**Falsifier:** layout unit test that disagrees, or a screenshot showing overlapping petals.
+
+### C7 — Hit test round-trips  `[ ]`
+For every rendered arc, hit-testing a point inside it returns that node; hit-testing outside the ring returns none.
+**Falsifier:** property test over generated layouts.
+
+### C8 — Navigation works both directions  `[ ]`
+Clicking a petal re-roots the view to that node; clicking the centre returns to the previous root, restoring it exactly.
+**Falsifier:** driving the app and observing an unchanged or wrong view.
+
+### C9 — Collector total is exact  `[ ]`
+The collector's displayed total equals the sum of allocated bytes of the collected set, and collecting an ancestor together with one of its descendants counts the child once.
+**Falsifier:** unit test on the collect set.
+
+### C10 — Deletion is guarded  `[ ]`
+Deletion refuses system roots (`/`, `/System`, `/usr`, `/bin`, `/sbin`, `/private`, `/Library/Apple`) and the scan root itself, and requires an explicit confirmation before removing more than 5 GB.
+**Falsifier:** guard unit test that allows a protected path.
+
+### C11 — Deletion is recoverable by default  `[ ]`
+The default action moves collected items to the macOS Trash, and a file deleted that way is present in `~/.Trash` afterwards.
+**Falsifier:** integration test where the item is gone and absent from Trash.
+
+### C12 — It is a real app that draws the disk  `[ ]`
+`bun run tauri:build` produces `DiskGuardian.app`, launching it scans the home volume and shows a non-empty flower, verified by a screenshot whose pixels are inspected.
+**Falsifier:** no app bundle, blank window, or absent petals.
+
+### C13 — Scanning does not freeze the window  `[ ]`
+While a scan of the home volume runs, the window still paints and the UI reports progress; a second scan of another path can be started concurrently.
+**Falsifier:** window beachballs or progress stops updating during the scan.
+
+## Test Strategy
+
+| Layer | Probe |
+|---|---|
+| Scan engine arithmetic | `cargo test -p diskguardian-core` on synthetically built fixtures |
+| Layout arithmetic | frontend unit tests (`bun test`) on the pure layout + hit-test functions |
+| Integration | `cargo test -p diskguardian-core --test integration` against a real temp tree |
+| Appearance | launch the built app, `screencapture`, view the pixels |
+| Behaviour | drive the running app (hover, drill, collect, delete) and re-read state |
+
+## Decisions
+
+- **Tauri 2 + Rust core over egui or SwiftUI** (2026-10-30, principal elected). Rust owns scanning, tree building, deletion and macOS integration; the system webview owns the canvas. Chosen because visual fidelity to DaisyDisk is a rendering problem the web canvas solves directly, while the hard cross-platform part (physical-size accounting, traversal) stays portable Rust.
+- **Workspace, not one crate.** `crates/core` has no UI dependencies so it is unit-testable and reusable by a future CLI.
+- **Physical sizes via `st_blocks`.** `len()` would over-report sparse files and under-report block rounding.
+- **Trash by default, permanent as an option.** DaisyDisk deletes permanently; an open-source tool should not, by default.
+- **Layout computed in the frontend.** Rust ships the tree and sizes; angles are cheap and belong next to the renderer that draws them.
+
+## Log
+
+- 2026-10-30 — Run opened. DaisyDisk feature surface captured from its own guide (sunburst structure, colour semantics, hover/click navigation, collector, physical-size accounting, excluded hard links/clones, restricted-space handling, virtual "smaller objects" and "hidden space" rows).

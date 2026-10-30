@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c2c30" />
+      <stop offset="1" stop-color="#141416" />
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)" />
+
+  <!-- outer ring: the petals -->
+  <g fill="none" stroke-width="132" stroke-linecap="butt">
+    <circle cx="512" cy="512" r="330" stroke="#3ddc84" stroke-dasharray="150 26" transform="rotate(-90 512 512)" />
+    <circle cx="512" cy="512" r="330" stroke="#ffd60a" stroke-dasharray="120 36" stroke-dashoffset="176" transform="rotate(-90 512 512)" />
+    <circle cx="512" cy="512" r="330" stroke="#ff9f0a" stroke-dasharray="190 23" stroke-dashoffset="332" transform="rotate(-90 512 512)" />
+    <circle cx="512" cy="512" r="330" stroke="#0a84ff" stroke-dasharray="96 30" stroke-dashoffset="545" transform="rotate(-90 512 512)" />
+    <circle cx="512" cy="512" r="330" stroke="#bf5af2" stroke-dasharray="140 28" stroke-dashoffset="671" transform="rotate(-90 512 512)" />
+  </g>
+
+  <!-- inner ring -->
+  <g fill="none" stroke-width="104" stroke-linecap="butt">
+    <circle cx="512" cy="512" r="196" stroke="#30d158" stroke-dasharray="96 18" transform="rotate(-90 512 512)" />
+    <circle cx="512" cy="512" r="196" stroke="#ffd60a" stroke-dasharray="70 22" stroke-dashoffset="114" transform="rotate(-90 512 512)" />
+    <circle cx="512" cy="512" r="196" stroke="#64d2ff" stroke-dasharray="120 18" stroke-dashoffset="206" transform="rotate(-90 512 512)" />
+    <circle cx="512" cy="512" r="196" stroke="#bf5af2" stroke-dasharray="80 20" stroke-dashoffset="344" transform="rotate(-90 512 512)" />
+  </g>
+
+  <!-- centre -->
+  <circle cx="512" cy="512" r="120" fill="#0d0d0f" stroke="rgba(255,255,255,0.16)" stroke-width="4" />
+  <circle cx="512" cy="512" r="34" fill="#f5f5f7" opacity="0.9" />
+</svg>

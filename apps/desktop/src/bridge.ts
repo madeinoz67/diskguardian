@@ -1,0 +1,232 @@
+// The bridge to Rust. In the Tauri webview every call is an IPC command; opened in a
+// plain browser (dev, screenshot, layout review) it serves a synthetic tree with the
+// same shape, so the sunburst can be looked at without a native window.
+
+import { invoke } from '@tauri-apps/api/core'
+import type { CollectState, DeleteReport, ScanResponse, ViewNode, VolumeInfo } from './types'
+
+export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+
+export async function homeDir(): Promise<string> {
+  if (!isTauri) return '/Users/you'
+  return invoke<string>('home_dir')
+}
+
+export async function volumes(): Promise<VolumeInfo[]> {
+  if (!isTauri) {
+    return [{ name: 'Macintosh HD', mount: '/', total_bytes: 994_662_584_320, free_bytes: 412_316_860_416 }]
+  }
+  return invoke<VolumeInfo[]>('volumes')
+}
+
+export async function scan(path: string): Promise<ScanResponse> {
+  if (!isTauri) return demoScan(path)
+  return invoke<ScanResponse>('scan', { path })
+}
+
+export async function view(scanId: string, nodeId: number | null): Promise<ViewNode[]> {
+  if (!isTauri) return demoView(nodeId)
+  return invoke<ViewNode[]>('view', { scanId, nodeId })
+}
+
+export async function collect(scanId: string, nodeId: number, add: boolean): Promise<CollectState> {
+  if (!isTauri) return demoCollect(nodeId, add)
+  return invoke<CollectState>('collect', { scanId, nodeId, add })
+}
+
+export async function deleteCollected(
+  scanId: string,
+  permanent: boolean,
+  confirmed: boolean,
+): Promise<DeleteReport> {
+  if (!isTauri) {
+    const total = demoCollectorTotal()
+    demoCollected.clear()
+    return { freed: total, removed: 1, failed: 0, outcomes: [] }
+  }
+  return invoke<DeleteReport>('delete_collected', { scanId, permanent, confirmed })
+}
+
+export async function reveal(scanId: string, nodeId: number): Promise<void> {
+  if (!isTauri) return
+  await invoke('reveal', { scanId, nodeId })
+}
+
+export async function quicklook(scanId: string, nodeId: number): Promise<void> {
+  if (!isTauri) return
+  await invoke('quicklook', { scanId, nodeId })
+}
+
+// ─── demo data ────────────────────────────────────────────────────────────────────────
+
+const GB = 1024 ** 3
+
+interface DemoSpec {
+  name: string
+  size: number
+  kind: ViewNode['kind']
+  children?: DemoSpec[]
+  spread?: number
+}
+
+const DEMO: DemoSpec[] = [
+  {
+    name: 'Library',
+    size: 83.6 * GB,
+    kind: 'dir',
+    children: [
+      { name: 'Caches', size: 28.4 * GB, kind: 'dir', spread: 26 },
+      { name: 'Application Support', size: 22.1 * GB, kind: 'dir', spread: 18 },
+      { name: 'Containers', size: 14.6 * GB, kind: 'dir', spread: 14 },
+      { name: 'Developer', size: 11.2 * GB, kind: 'dir', spread: 9 },
+      { name: 'Mail', size: 7.3 * GB, kind: 'dir', spread: 6 },
+    ],
+  },
+  {
+    name: 'Archive',
+    size: 34 * GB,
+    kind: 'dir',
+    children: [
+      { name: '2023', size: 18.2 * GB, kind: 'dir', spread: 12 },
+      { name: '2022', size: 15.8 * GB, kind: 'dir', spread: 10 },
+    ],
+  },
+  {
+    name: 'Pictures',
+    size: 22.3 * GB,
+    kind: 'dir',
+    children: [
+      { name: 'Photos Library.photoslibrary', size: 19.4 * GB, kind: 'dir', spread: 8 },
+      { name: 'Screenshots', size: 2.9 * GB, kind: 'dir', spread: 30 },
+    ],
+  },
+  { name: 'Documents', size: 9.5 * GB, kind: 'dir', spread: 34 },
+  { name: 'Desktop', size: 6.1 * GB, kind: 'dir', spread: 22 },
+  { name: 'Trash', size: 5.1 * GB, kind: 'dir', spread: 16 },
+  { name: 'Virtual Machines.vmwarevm', size: 4.4 * GB, kind: 'file' },
+  { name: 'Downloads', size: 1.1 * GB, kind: 'dir', spread: 28 },
+  { name: 'Private', size: 0.9 * GB, kind: 'restricted' },
+]
+
+let demoNodes: ViewNode[] = []
+const demoCollected = new Set<number>()
+
+function buildDemo(): ViewNode[] {
+  const nodes: ViewNode[] = []
+  const push = (node: Omit<ViewNode, 'index'>): number => {
+    const index = nodes.length
+    nodes.push({ ...node, index })
+    return index
+  }
+
+  const rootIndex = push({
+    node_id: 0,
+    name: 'you',
+    bytes: 0,
+    kind: 'dir',
+    children: [],
+    aggregated_count: 0,
+    partial: false,
+  })
+
+  let seed = 7
+  const rand = (): number => {
+    seed = (seed * 1103515245 + 12345) % 2 ** 31
+    return seed / 2 ** 31
+  }
+
+  const add = (spec: DemoSpec, parent: number, id: number): number => {
+    const index = push({
+      node_id: id,
+      name: spec.name,
+      bytes: spec.size,
+      kind: spec.kind,
+      children: [],
+      aggregated_count: 0,
+      partial: spec.kind === 'restricted',
+    })
+    nodes[parent]!.children.push(index)
+
+    if (spec.spread) {
+      let remaining = spec.size * 0.72
+      for (let i = 0; i < spec.spread; i += 1) {
+        const share = remaining * (0.35 + rand() * 0.4)
+        remaining -= share
+        if (share <= 0) break
+        const child = push({
+          node_id: id * 1000 + i + 1,
+          name: `item-${i + 1}`,
+          bytes: share,
+          kind: i % 4 === 0 ? 'file' : 'dir',
+          children: [],
+          aggregated_count: 0,
+          partial: false,
+        })
+        nodes[index]!.children.push(child)
+      }
+    }
+
+    for (const [i, child] of (spec.children ?? []).entries()) {
+      add(child, index, id * 100 + i + 1)
+    }
+    return index
+  }
+
+  DEMO.forEach((spec, i) => add(spec, rootIndex, i + 1))
+
+  nodes[rootIndex]!.bytes = nodes[rootIndex]!.children.reduce((sum, c) => sum + nodes[c]!.bytes, 0)
+  return nodes
+}
+
+function demoScan(path: string): ScanResponse {
+  demoNodes = buildDemo()
+  demoCollected.clear()
+  const root = demoNodes[0]!
+  return {
+    scan_id: 'demo',
+    name: path.split('/').filter(Boolean).pop() ?? 'you',
+    path,
+    bytes: root.bytes,
+    files: 184_120,
+    duration_ms: 1420,
+    errors: 2,
+    partial: true,
+    view: reroot(demoNodes, 0),
+  }
+}
+
+function reroot(nodes: ViewNode[], rootIndex: number): ViewNode[] {
+  const out: ViewNode[] = []
+  const walk = (index: number): number => {
+    const node = nodes[index]
+    if (!node) return -1
+    const next = out.length
+    const clone: ViewNode = { ...node, index: next, children: [] }
+    out.push(clone)
+    clone.children = node.children.map(walk).filter((i) => i >= 0)
+    return next
+  }
+  walk(rootIndex)
+  return out
+}
+
+function demoView(nodeId: number | null): ViewNode[] {
+  return reroot(demoNodes, nodeId ?? 0)
+}
+
+function demoCollect(nodeId: number, add: boolean): CollectState {
+  if (add) demoCollected.add(nodeId)
+  else demoCollected.delete(nodeId)
+  return {
+    total: demoCollectorTotal(),
+    count: demoCollected.size,
+    ids: [...demoCollected],
+  }
+}
+
+function demoCollectorTotal(): number {
+  return [...demoCollected].reduce((sum, id) => {
+    const node = demoNodes.find((n) => n.node_id === id)
+    return sum + (node?.bytes ?? 0)
+  }, 0)
+}

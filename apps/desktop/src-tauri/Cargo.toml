@@ -1,0 +1,25 @@
+[package]
+name = "diskguardian-app"
+description = "DiskGuardian desktop application (Tauri shell + macOS integration)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[lib]
+name = "diskguardian_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+diskguardian-core = { path = "../../../crates/core" }
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+default = []

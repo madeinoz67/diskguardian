@@ -1,0 +1,23 @@
+//! diskguardian-core — the scanning engine behind the DiskGuardian app.
+//!
+//! It answers one question honestly: *what is actually occupying this disk?*
+//! Everything here is UI-free and portable: the desktop app, and any future CLI,
+//! consume the same [`Tree`].
+//!
+//! The two invariants the whole product rests on:
+//!
+//! 1. Sizes are **physical allocation** (`st_blocks * 512`), never logical length.
+//! 2. Space that could not be measured is **reported as restricted**, never
+//!    silently dropped.
+
+pub mod collect;
+pub mod delete;
+pub mod model;
+pub mod scan;
+pub mod view;
+
+pub use collect::Collector;
+pub use delete::{delete, DeleteMode, DeleteOutcome, DeleteReport, GuardError};
+pub use model::{Node, NodeId, NodeKind, Tree};
+pub use scan::{scan, ScanError, ScanOptions};
+pub use view::{build_view, ViewNode, ViewOptions};

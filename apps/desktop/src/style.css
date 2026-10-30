@@ -1,0 +1,350 @@
+:root {
+  --bg: #1c1c1e;
+  --stage-bg: #131315;
+  --panel: rgba(255, 255, 255, 0.04);
+  --separator: rgba(255, 255, 255, 0.09);
+  --text: #f5f5f7;
+  --muted: #8e8e93;
+  --accent: #0a84ff;
+  --danger: #ff453a;
+  --collector-h: 76px;
+  --topbar-h: 52px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+#app {
+  display: grid;
+  grid-template-rows: var(--topbar-h) 1fr var(--collector-h);
+  height: 100vh;
+}
+
+/* ── top bar ──────────────────────────────────────────────────────────────────── */
+
+#topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  /* Clear the native traffic lights drawn over the webview. */
+  padding: 0 16px 0 84px;
+  border-bottom: 1px solid var(--separator);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+  -webkit-app-region: drag;
+}
+
+#crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.crumb {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  padding: 5px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.crumb:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.crumb.active {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.crumb + .crumb::before {
+  content: '›';
+  position: absolute;
+  margin-left: -14px;
+  color: rgba(255, 255, 255, 0.22);
+}
+
+.crumb.action {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+#status {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+body.scanning #status::before {
+  content: '';
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+  border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+  vertical-align: -1px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── stage + legend ───────────────────────────────────────────────────────────── */
+
+#content {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  min-height: 0;
+}
+
+#stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: radial-gradient(circle at 50% 45%, #1b1b1f 0%, var(--stage-bg) 72%);
+}
+
+#sunburst {
+  --stage-bg: transparent;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: default;
+}
+
+body.dragging #sunburst {
+  cursor: grabbing;
+}
+
+#hover-label {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  padding: 7px 12px;
+  border-radius: 9px;
+  background: rgba(20, 20, 22, 0.92);
+  border: 1px solid var(--separator);
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  max-width: 70%;
+}
+
+#hover-label strong {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#hover-label span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+#empty-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+/* ── legend ───────────────────────────────────────────────────────────────────── */
+
+#legend {
+  border-left: 1px solid var(--separator);
+  padding: 14px 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.legend-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 2px 8px 10px;
+  color: var(--muted);
+}
+
+.legend-heading span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-heading strong {
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.legend-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+}
+
+.legend-row:hover,
+.legend-row:focus-visible {
+  background: var(--panel);
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.legend-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-size {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.collect {
+  appearance: none;
+  border: 1px solid var(--separator);
+  background: transparent;
+  color: var(--muted);
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.legend-row:hover .collect,
+.collect.on {
+  opacity: 1;
+}
+
+.collect.on {
+  color: #ffd60a;
+  border-color: rgba(255, 214, 10, 0.5);
+}
+
+/* ── collector ────────────────────────────────────────────────────────────────── */
+
+#collector {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  border-top: 1px solid var(--separator);
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+#collector.armed {
+  background: rgba(10, 132, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.45);
+}
+
+#collect-dial {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(10, 132, 255, 0.55);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+#collect-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#collect-amount {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+#collect-caption {
+  color: var(--muted);
+}
+
+#delete-button {
+  margin-left: auto;
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 22px;
+  background: var(--danger);
+  color: #fff;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+#delete-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+#delete-button:disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.35);
+  cursor: default;
+}

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "muninndb-diskguardian": {
+      "type": "http",
+      "url": "http://localhost:8125/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MUNINN_DISKGUARDIAN_KEY}"
+      }
+    }
+  }
+}

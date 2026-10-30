@@ -1,0 +1,24 @@
+{
+  "name": "diskguardian-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 1420 --strictPort",
+    "test": "bun test",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/bun": "^1.4.4",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}

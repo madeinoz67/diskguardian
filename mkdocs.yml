@@ -1,0 +1,40 @@
+site_name: DiskGuardian
+site_description: See what is filling your disk, and get the space back.
+theme:
+  name: material
+  palette:
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: black
+      accent: light green
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: black
+      accent: green
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+  features:
+    - navigation.instant
+    - navigation.sections
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+repo_url: https://github.com/madeinoz67/diskguardian
+repo_name: madeinoz67/diskguardian
+
+nav:
+  - Home: index.md
+  - How it works: how-it-works.md
+  - Building: building.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - tables
