@@ -548,6 +548,29 @@ async function showOverview(): Promise<void> {
     )
   }
 
+  // Anything already in the trash is still occupying the disk, and is the cheapest win on
+  // offer. Show the number before offering the button.
+  try {
+    const trash = await bridge.trashStats()
+    if (trash.supported && trash.items > 0) {
+      volumeList.append(
+        volumeRow({
+          name: 'Trash',
+          mount: trash.path,
+          total_bytes: trash.bytes,
+          free_bytes: 0,
+          detail: `${formatBytes(trash.bytes)} · ${trash.items} item${trash.items === 1 ? '' : 's'} · emptying this is the only way to get it back`,
+          gauge: false,
+          actionLabel: 'Empty',
+          actionTone: 'var(--danger)',
+          onAction: () => void emptyTrashNow(trash.bytes),
+        }),
+      )
+    }
+  } catch (error) {
+    console.error('trash stats failed', error)
+  }
+
   for (const volume of volumes) {
     const gauge = gaugeFor(volume)
     volumeList.append(
@@ -574,6 +597,10 @@ interface VolumeRowOptions {
   gauge: boolean
   usedRatio?: number
   tone?: string
+  /** Defaults to Scan, which scans `mount`. */
+  actionLabel?: string
+  actionTone?: string
+  onAction?: () => void
 }
 
 function volumeRow(options: VolumeRowOptions): HTMLElement {
@@ -604,8 +631,12 @@ function volumeRow(options: VolumeRowOptions): HTMLElement {
   const scan = document.createElement('button')
   scan.type = 'button'
   scan.className = 'volume-scan'
-  scan.textContent = 'Scan'
-  scan.addEventListener('click', () => void scanPath(options.mount))
+  scan.textContent = options.actionLabel ?? 'Scan'
+  if (options.actionTone) scan.style.background = options.actionTone
+  scan.addEventListener('click', () => {
+    if (options.onAction) options.onAction()
+    else void scanPath(options.mount)
+  })
 
   row.append(left, scan)
   return row
@@ -668,6 +699,23 @@ async function refreshIfStale(): Promise<void> {
     )
   } catch (error) {
     showError(`Could not refresh the view: ${String(error)}`)
+  }
+}
+
+/** Emptying is irreversible and global, so it names the size first and always confirms. */
+async function emptyTrashNow(bytes: number): Promise<void> {
+  const ok = window.confirm(
+    `Empty the Trash?\n\nThis frees ${formatBytes(bytes)} and cannot be undone.`,
+  )
+  if (!ok) return
+
+  try {
+    const report = await bridge.emptyTrash(true)
+    const failed = report.failed > 0 ? `, ${report.failed} could not be removed` : ''
+    setStatus(`Freed ${formatBytes(report.freed)} · ${report.removed} item(s) removed${failed}`)
+    await showOverview()
+  } catch (error) {
+    showError(`Could not empty the Trash: ${String(error)}`)
   }
 }
 

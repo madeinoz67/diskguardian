@@ -29,6 +29,19 @@ export interface CollectState {
   needs_confirmation: boolean
 }
 
+export interface TrashStats {
+  path: string
+  bytes: number
+  items: number
+  supported: boolean
+}
+
+export interface EmptyReport {
+  freed: number
+  removed: number
+  failed: number
+}
+
 export interface FreshnessReport {
   removed: number
   bytes: number

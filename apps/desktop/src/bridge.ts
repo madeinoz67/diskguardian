@@ -9,7 +9,9 @@ import type {
   CollectState,
   DeleteReport,
   FreshnessReport,
+  EmptyReport,
   ScanResponse,
+  TrashStats,
   ViewNode,
   VolumeInfo,
 } from './types'
@@ -51,6 +53,16 @@ export async function scan(path: string): Promise<ScanResponse> {
 export async function view(scanId: string, nodeId: number | null): Promise<ViewNode[]> {
   if (!isTauri) return demoView(nodeId)
   return invoke<ViewNode[]>('view', { scanId, nodeId })
+}
+
+export async function trashStats(): Promise<TrashStats> {
+  if (!isTauri) return { path: '', bytes: 0, items: 0, supported: false }
+  return invoke<TrashStats>('trash_stats')
+}
+
+export async function emptyTrash(confirmed: boolean): Promise<EmptyReport> {
+  if (!isTauri) return { freed: 0, removed: 0, failed: 0 }
+  return invoke<EmptyReport>('empty_trash', { confirmed })
 }
 
 /** Drop view nodes whose paths have vanished since the scan. */

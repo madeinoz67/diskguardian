@@ -16,6 +16,8 @@ pub fn run() {
             commands::view,
             commands::collect,
             commands::revalidate,
+            commands::trash_stats,
+            commands::empty_trash,
             commands::collected,
             commands::delete_collected,
             commands::reveal,

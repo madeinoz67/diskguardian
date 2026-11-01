@@ -200,6 +200,168 @@ pub fn view(
 }
 
 #[derive(Debug, Serialize)]
+pub struct TrashStats {
+    /// Where this platform keeps the trash, empty when it has no path-based one.
+    pub path: String,
+    pub bytes: u64,
+    pub items: u64,
+    pub supported: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EmptyReport {
+    pub freed: u64,
+    pub removed: u64,
+    pub failed: u64,
+}
+
+/// The trash this platform keeps inside the user's home, if it has one.
+fn trash_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        return std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".Trash"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(data) = std::env::var_os("XDG_DATA_HOME") {
+            return Some(PathBuf::from(data).join("Trash"));
+        }
+        return std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join(".local/share/Trash"));
+    }
+
+    #[cfg(windows)]
+    {
+        None
+    }
+}
+
+/// How much the trash is holding. Emptying it is the step that actually returns the space.
+#[tauri::command]
+pub fn trash_stats() -> TrashStats {
+    let Some(path) = trash_path() else {
+        return TrashStats {
+            path: String::new(),
+            bytes: 0,
+            items: 0,
+            supported: cfg!(windows),
+        };
+    };
+
+    // Linux keeps the payload under `files/`, macOS directly in `.Trash`.
+    let payload = if path.join("files").is_dir() {
+        path.join("files")
+    } else {
+        path.clone()
+    };
+
+    let mut bytes = 0u64;
+    let mut items = 0u64;
+    if let Ok(entries) = std::fs::read_dir(&payload) {
+        for entry in entries.flatten() {
+            items += 1;
+            bytes = bytes.saturating_add(walk_bytes(&entry.path()));
+        }
+    }
+
+    TrashStats {
+        path: payload.display().to_string(),
+        bytes,
+        items,
+        supported: true,
+    }
+}
+
+fn walk_bytes(path: &std::path::Path) -> u64 {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+    if meta.is_dir() {
+        let mut total = diskguardian_core::scan::allocation(&meta);
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                total = total.saturating_add(walk_bytes(&entry.path()));
+            }
+        }
+        total
+    } else {
+        diskguardian_core::scan::allocation(&meta)
+    }
+}
+
+/// Empty the trash. Irreversible, so it always needs `confirmed`.
+#[tauri::command]
+pub fn empty_trash(confirmed: bool) -> Result<EmptyReport, String> {
+    if !confirmed {
+        return Err("emptying the trash needs explicit confirmation".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"])
+            .status()
+            .map_err(|e| format!("could not run powershell: {e}"))?;
+        return Ok(EmptyReport {
+            freed: 0,
+            removed: 0,
+            failed: if status.success() { 0 } else { 1 },
+        });
+    }
+
+    #[cfg(not(windows))]
+    {
+        let Some(path) = trash_path() else {
+            return Err("no trash directory on this platform".to_string());
+        };
+        let payload = if path.join("files").is_dir() {
+            path.join("files")
+        } else {
+            path
+        };
+
+        let mut freed = 0u64;
+        let mut removed = 0u64;
+        let mut failed = 0u64;
+
+        let entries = std::fs::read_dir(&payload).map_err(|e| e.to_string())?;
+        for entry in entries.flatten() {
+            let target = entry.path();
+            let size = walk_bytes(&target);
+            let result = if target.is_dir() {
+                std::fs::remove_dir_all(&target)
+            } else {
+                std::fs::remove_file(&target)
+            };
+            match result {
+                Ok(()) => {
+                    freed = freed.saturating_add(size);
+                    removed += 1;
+                }
+                Err(_) => failed += 1,
+            }
+        }
+
+        // Linux keeps matching metadata beside the payload.
+        let info = payload.parent().map(|p| p.join("info"));
+        if let Some(info) = info.filter(|i| i.is_dir()) {
+            if let Ok(entries) = std::fs::read_dir(info) {
+                for entry in entries.flatten() {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+
+        Ok(EmptyReport {
+            freed,
+            removed,
+            failed,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
 pub struct FreshnessReport {
     /// How many nodes in this view no longer exist on disk.
     pub removed: u32,

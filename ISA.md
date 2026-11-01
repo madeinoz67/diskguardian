@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 14/20
+progress: 15/21
 iteration: 1
 created: 2026-10-30
 ---
@@ -172,6 +172,17 @@ to once every 4 seconds, and reports the count in the status line.
 **Note:** this is deliberately shallow, one level at a time, because a deep re-stat on every
 focus would cost as much as a rescan. Deeper staleness is refreshed when you drill in, or by
 Rescan.
+
+### C21 — The space actually comes back  `[x]`
+Because deletion moves to the Trash, the overview measures the Trash and offers to empty it,
+naming the size before doing so. Without this the product promises space it never returns.
+**Probe:** `trash_stats` walks the platform's trash (`.Trash` on macOS, `~/.local/share/Trash`
+or `$XDG_DATA_HOME/Trash` on Linux, `Clear-RecycleBin` on Windows) and reports bytes and item
+count; `empty_trash` refuses without `confirmed`, removes each entry, and reports what it
+freed. The UI confirms with the measured size and re-renders the overview afterwards.
+**Falsifier:** an app that can only move files into a Trash it never helps clear.
+**Note:** emptying the platform trash is global and irreversible, which is why it asks with a
+number attached rather than a bare confirm.
 
 ## Test Strategy
 
