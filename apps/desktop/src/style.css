@@ -354,3 +354,139 @@ body.dragging #sunburst {
   color: rgba(255, 255, 255, 0.35);
   cursor: default;
 }
+
+/* ── error banner ─────────────────────────────────────────────────────────────── */
+
+#toast {
+  position: fixed;
+  top: calc(var(--topbar-h) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 80vw;
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: #3a1416;
+  border: 1px solid rgba(255, 69, 58, 0.55);
+  color: #ffd9d6;
+  font-size: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+#toast button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* ── overview ─────────────────────────────────────────────────────────────────── */
+
+#overview {
+  position: fixed;
+  inset: var(--topbar-h) 0 var(--collector-h) 0;
+  z-index: 10;
+  background: #131315;
+  overflow-y: auto;
+}
+
+.overview-inner {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 34px 24px 20px;
+}
+
+.overview-inner h1 {
+  margin: 0 0 18px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.volume-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--separator);
+  margin-bottom: 10px;
+}
+
+.volume-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.volume-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.volume-bar {
+  margin-top: 9px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.volume-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.volume-scan {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 18px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.volume-scan:hover {
+  filter: brightness(1.08);
+}
+
+.overview-footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+#scan-folder {
+  appearance: none;
+  border: 1px solid var(--separator);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  border-radius: 9px;
+  padding: 9px 16px;
+  font: inherit;
+  cursor: pointer;
+}
+
+#scan-folder:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.overview-footer .hint {
+  color: var(--muted);
+  font-size: 12px;
+}

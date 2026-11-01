@@ -12,6 +12,7 @@
         <nav id="crumbs" aria-label="Location"></nav>
         <div id="status"></div>
       </header>
+      <div id="toast" hidden><span id="toast-text"></span><button id="toast-close" type="button">Dismiss</button></div>
 
       <main id="content">
         <section id="stage">
@@ -23,6 +24,17 @@
         </section>
         <aside id="legend" aria-label="Contents"></aside>
       </main>
+
+      <div id="overview" hidden>
+        <div class="overview-inner">
+          <h1>Disks and folders</h1>
+          <div id="volume-list"></div>
+          <div class="overview-footer">
+            <button id="scan-folder" type="button">Scan Folder…</button>
+            <span class="hint">or drop a disk or folder anywhere in this window</span>
+          </div>
+        </div>
+      </div>
 
       <footer id="collector">
         <div id="collect-dial"><span id="collect-value">0</span></div>

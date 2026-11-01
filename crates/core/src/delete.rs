@@ -22,23 +22,56 @@ pub const CONFIRM_THRESHOLD_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 /// `/tmp` symlink) and every Homebrew cache (`/usr/local`) — a disk cleaner that cannot
 /// clean the two places most likely to be full is a disk cleaner that lies. Protect the
 /// system's own trees, not the prefixes they happen to live under.
-pub const PROTECTED_PREFIXES: &[&str] = &[
-    "/System",
-    "/usr/bin",
-    "/usr/sbin",
-    "/usr/lib",
-    "/usr/libexec",
-    "/usr/share",
-    "/usr/standalone",
-    "/bin",
-    "/sbin",
-    "/private/etc",
-    "/private/var/db",
-    "/private/var/vm",
-    "/Library/Apple",
-    "/dev",
-    "/cores",
-];
+///
+/// Per-platform because the list is a property of the OS, not of this program: Windows
+/// installs its system trees on an arbitrary drive letter under `%SystemRoot%`, and Linux
+/// keeps them in different places again.
+#[must_use]
+pub fn protected_roots() -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        [
+            "/System",
+            "/usr/bin",
+            "/usr/sbin",
+            "/usr/lib",
+            "/usr/libexec",
+            "/usr/share",
+            "/usr/standalone",
+            "/bin",
+            "/sbin",
+            "/private/etc",
+            "/private/var/db",
+            "/private/var/vm",
+            "/Library/Apple",
+            "/dev",
+            "/cores",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect()
+    }
+
+    #[cfg(windows)]
+    {
+        ["SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"]
+            .iter()
+            .filter_map(|key| std::env::var(key).ok())
+            .map(PathBuf::from)
+            .collect()
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        [
+            "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/lib", "/lib", "/lib64", "/boot",
+            "/etc", "/dev", "/proc", "/sys",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect()
+    }
+}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum GuardError {
@@ -90,8 +123,8 @@ pub fn guard(path: &Path, scan_root: &Path) -> Result<PathBuf, GuardError> {
     if absolute == root {
         return Err(GuardError::ScanRoot { path: absolute });
     }
-    for prefix in PROTECTED_PREFIXES {
-        if absolute == Path::new(prefix) || absolute.starts_with(prefix) {
+    for root in protected_roots() {
+        if absolute == root || absolute.starts_with(&root) {
             return Err(GuardError::Protected { path: absolute });
         }
     }

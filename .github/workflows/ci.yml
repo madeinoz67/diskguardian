@@ -11,8 +11,13 @@ concurrency:
 
 jobs:
   engine:
-    name: Scan engine (Rust)
-    runs-on: macos-latest
+    name: Scan engine (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The engine is the portable half of the product, so it is proven on all three.
+        os: [macos-latest, ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 

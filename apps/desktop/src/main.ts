@@ -4,7 +4,8 @@ import { Sunburst } from './sunburst'
 import { assignHues, colorFor } from './layout'
 import type { Arc } from './layout'
 import { formatBytes, formatCount } from './format'
-import type { ViewNode } from './types'
+import type { ViewNode, VolumeInfo } from './types'
+import { basename, gaugeFor, toneColor } from './overview'
 import { applyBranch, advance, findChildByName, partialView, startBranches } from './partial'
 import type { PartialBranch } from './partial'
 
@@ -24,6 +25,10 @@ const collectCaption = el<HTMLElement>('collect-caption')
 const collectValue = el<HTMLElement>('collect-value')
 const deleteButton = el<HTMLButtonElement>('delete-button')
 const hoverLabel = el<HTMLElement>('hover-label')
+const toast = el<HTMLElement>('toast')
+const toastText = el<HTMLElement>('toast-text')
+const overview = el<HTMLElement>('overview')
+const volumeList = el<HTMLElement>('volume-list')
 
 const sunburst = new Sunburst(canvas)
 
@@ -102,7 +107,19 @@ function setStatus(text: string): void {
   status.textContent = text
 }
 
+/**
+ * Something the user must see. The first version of this reported failures only in the
+ * status line, which made a broken control look identical to a working one.
+ */
+function showError(text: string): void {
+  console.error(text)
+  toastText.textContent = text
+  toast.hidden = false
+  setStatus(text)
+}
+
 async function scanPath(path: string): Promise<void> {
+  overview.hidden = true
   setStatus('Scanning…')
   document.body.classList.add('scanning')
   let unsubscribe: (() => void) | null = null
@@ -124,6 +141,19 @@ async function scanPath(path: string): Promise<void> {
     renderCrumbs()
     renderLegend()
     updateCollector()
+
+    // Probe the collector IPC straight away: if a multi-argument command is miswired, that
+    // is visible now rather than the first time somebody presses +.
+    try {
+      const existing = await bridge.collected(result.scan_id)
+      state.collectedTotal = existing.total
+      state.collectedCount = existing.count
+      state.collectedIds = existing.ids
+      state.needsConfirmation = existing.needs_confirmation
+      updateCollector()
+    } catch (error) {
+      showError(`Collector IPC failed: ${String(error)}`)
+    }
 
     // Honour a click made while the petal was still measuring.
     const wanted = pendingDrill
@@ -199,6 +229,13 @@ function renderCrumbs(): void {
     })
     crumbs.append(crumb)
   })
+
+  const back = document.createElement('button')
+  back.type = 'button'
+  back.className = 'crumb'
+  back.textContent = 'Disks and folders'
+  back.addEventListener('click', () => void showOverview())
+  crumbs.prepend(back)
 
   const scanButton = document.createElement('button')
   scanButton.type = 'button'
@@ -469,6 +506,9 @@ window.addEventListener('keydown', (event) => {
 })
 
 deleteButton.addEventListener('click', (event) => void onDelete(event.altKey))
+el<HTMLButtonElement>('toast-close').addEventListener('click', () => {
+  toast.hidden = true
+})
 // Alt-click is the permanent path; the button's tooltip says so.
 deleteButton.title = 'Move to Trash · hold Option to delete permanently'
 
@@ -477,15 +517,135 @@ resizeObserver.observe(canvas)
 
 // ─── boot ─────────────────────────────────────────────────────────────────────────────
 
+let homePath = ''
+
+/** The landing screen: pick a volume, a folder, or drop something on the window. */
+async function showOverview(): Promise<void> {
+  overview.hidden = false
+  hoverLabel.hidden = true
+  setStatus('Choose a disk or folder to scan')
+
+  let volumes: VolumeInfo[] = []
+  try {
+    volumes = await bridge.volumes()
+  } catch (error) {
+    showError(`Could not list volumes: ${String(error)}`)
+  }
+
+  volumeList.replaceChildren()
+
+  // The home folder is the most common target after the whole disk, so it gets its own row.
+  if (homePath) {
+    volumeList.append(
+      volumeRow({
+        name: 'Home folder',
+        mount: homePath,
+        total_bytes: 0,
+        free_bytes: 0,
+        detail: basename(homePath),
+        gauge: false,
+      }),
+    )
+  }
+
+  for (const volume of volumes) {
+    const gauge = gaugeFor(volume)
+    volumeList.append(
+      volumeRow({
+        name: volume.name,
+        mount: volume.mount,
+        total_bytes: volume.total_bytes,
+        free_bytes: volume.free_bytes,
+        detail: `${gauge.freeLabel} of ${formatBytes(volume.total_bytes)}`,
+        gauge: true,
+        usedRatio: gauge.usedRatio,
+        tone: toneColor(gauge.tone),
+      }),
+    )
+  }
+}
+
+interface VolumeRowOptions {
+  name: string
+  mount: string
+  total_bytes: number
+  free_bytes: number
+  detail: string
+  gauge: boolean
+  usedRatio?: number
+  tone?: string
+}
+
+function volumeRow(options: VolumeRowOptions): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'volume-row'
+
+  const left = document.createElement('div')
+  const name = document.createElement('div')
+  name.className = 'volume-name'
+  name.textContent = options.name
+
+  const meta = document.createElement('div')
+  meta.className = 'volume-meta'
+  meta.textContent = options.detail
+
+  left.append(name, meta)
+
+  if (options.gauge) {
+    const bar = document.createElement('div')
+    bar.className = 'volume-bar'
+    const fill = document.createElement('span')
+    fill.style.width = `${Math.round((options.usedRatio ?? 0) * 100)}%`
+    fill.style.background = options.tone ?? '#30d158'
+    bar.append(fill)
+    left.append(bar)
+  }
+
+  const scan = document.createElement('button')
+  scan.type = 'button'
+  scan.className = 'volume-scan'
+  scan.textContent = 'Scan'
+  scan.addEventListener('click', () => void scanPath(options.mount))
+
+  row.append(left, scan)
+  return row
+}
+
 async function boot(): Promise<void> {
   try {
-    const [home, volumes] = await Promise.all([bridge.homeDir(), bridge.volumes()])
-    if (volumes[0]) {
-      setStatus(`${volumes[0].name} · ${formatBytes(volumes[0].free_bytes)} free`)
-    }
-    await scanPath(home)
+    homePath = await bridge.homeDir()
+    await showOverview()
   } catch (error) {
-    setStatus(`Startup failed: ${String(error)}`)
+    showError(`Startup failed: ${String(error)}`)
+  }
+
+  el<HTMLButtonElement>('scan-folder').addEventListener('click', () => void pickFolder())
+
+  // Drop a disk or folder on the window, the way DaisyDisk does it.
+  if (bridge.isTauri) {
+    const { getCurrentWebview } = await import('@tauri-apps/api/webview')
+    await getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type === 'drop') {
+        const dropped = event.payload.paths[0]
+        if (dropped) {
+          overview.hidden = true
+          void scanPath(dropped)
+        }
+      }
+    })
+  }
+}
+
+async function pickFolder(): Promise<void> {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const chosen = await open({ directory: true, multiple: false, title: 'Choose a folder to scan' })
+    if (typeof chosen === 'string' && chosen.length > 0) {
+      overview.hidden = true
+      await scanPath(chosen)
+    }
+  } catch (error) {
+    showError(`Could not open the folder picker: ${String(error)}`)
   }
 }
 

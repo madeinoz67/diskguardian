@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 12/18
+progress: 13/19
 iteration: 1
 created: 2026-10-30
 ---
@@ -151,6 +151,16 @@ multi-argument command raises a visible banner instead of failing silently on fi
 `delete_collected`, `reveal`, `quicklook`) is unexercised; `scan` and `peek_root`, which take
 one or none, are known good. That points at the IPC argument binding, not the handler.
 
+### C19 — The scan target is chosen, not assumed  `[x]`
+The app opens on a "Disks and folders" screen listing every mounted volume with a usage gauge
+and a free-space figure, plus the home folder; each row has a Scan button. A folder can also
+be chosen with the system picker, or dropped onto the window. The breadcrumb leads back to
+that screen from any scan.
+**Probe:** `bun test` on `overview.ts` (half-empty is healthy, a quarter is tight, a tenth is
+critical, nonsense numbers clamp instead of drawing off the bar, `basename` handles both
+separators); the volume list comes from `sysinfo`, so it is per-platform rather than `df`.
+**Falsifier:** an app that can only scan one hard-coded root.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -186,6 +196,8 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-02 — Overview shipped, and the app now starts there instead of guessing at `$HOME`. Cross-platform pass alongside it: volumes come from `sysinfo` rather than `df`, reveal/Quick Look have per-OS branches (Quick Look itself is macOS-only, so elsewhere the item opens in its default handler), and the deletion guard builds its protected list per platform. Recorded honestly: two earlier scripted patches (the error banner and the post-scan collector probe) silently failed to match and never applied, so a commit claimed a diagnostic that did not exist. Every subsequent edit asserts its anchor.
 
 - 2026-10-30 — Progressive paint shipped (`d59013e`). Evidence: `bun test` 10/10 including four new tests on `partial.ts`; `cargo test` 10/10; clippy silent; bundle rebuilt and launched. Not photographed: the growth animation itself, because browser automation is unavailable this run. C15 closed on the layout tests; C14 still open and now measured against `du`.
 

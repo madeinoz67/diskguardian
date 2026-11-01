@@ -87,52 +87,38 @@ pub fn home_dir() -> String {
         .unwrap_or_else(|_| "/".to_string())
 }
 
-/// Mounted volumes, via `df`. Deliberately not a sysinfo dependency: one call, parsed
-/// once, on a code path that never touches the scan results.
+/// Mounted volumes, cross-platform.
+///
+/// This used to shell out to `df -k`, which is Unix-only. `sysinfo` asks each platform's own
+/// API instead: `getmntinfo` on macOS, `/proc/mounts` on Linux, `GetLogicalDrives` on
+/// Windows. It also means no external command has to exist.
 #[tauri::command]
 pub fn volumes() -> Vec<VolumeInfo> {
-    let output = std::process::Command::new("df").args(["-k", "-P"]).output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    parse_df(&String::from_utf8_lossy(&output.stdout))
-}
+    let disks = sysinfo::Disks::new_with_refreshed_list();
 
-fn parse_df(text: &str) -> Vec<VolumeInfo> {
-    let mut volumes = Vec::new();
-    for line in text.lines().skip(1) {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 6 {
-            continue;
-        }
-        let mount = fields[5..].join(" ");
-        if !mount.starts_with('/') {
-            continue;
-        }
-        let filesystem = fields[0];
-        if filesystem.starts_with("devfs") || filesystem.starts_with("map") {
-            continue;
-        }
-        let Ok(blocks) = fields[1].parse::<u64>() else {
-            continue;
-        };
-        let Ok(available) = fields[3].parse::<u64>() else {
-            continue;
-        };
-        let name = if mount == "/" {
-            "Macintosh HD".to_string()
-        } else {
-            Path::new(&mount)
-                .file_name()
-                .map_or_else(|| mount.clone(), |n| n.to_string_lossy().into_owned())
-        };
-        volumes.push(VolumeInfo {
-            name,
-            mount,
-            total_bytes: blocks.saturating_mul(1024),
-            free_bytes: available.saturating_mul(1024),
-        });
-    }
+    let mut volumes: Vec<VolumeInfo> = disks
+        .iter()
+        .filter(|disk| disk.total_space() > 0)
+        .map(|disk| {
+            let mount = disk.mount_point().to_string_lossy().into_owned();
+            let label = disk.name().to_string_lossy().into_owned();
+            VolumeInfo {
+                name: if label.is_empty() && mount == "/" {
+                    "Startup disk".to_string()
+                } else if label.is_empty() {
+                    mount.clone()
+                } else {
+                    label
+                },
+                mount,
+                total_bytes: disk.total_space(),
+                free_bytes: disk.available_space(),
+            }
+        })
+        .collect();
+
+    // Biggest first, which is the disk people are usually worried about.
+    volumes.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
     volumes
 }
 
@@ -360,22 +346,3 @@ pub fn quicklook(state: State<'_, AppState>, scan_id: String, node_id: u64) -> R
     platform::quicklook(&path)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::parse_df;
-
-    #[test]
-    fn parses_df_output_including_mounts_with_spaces() {
-        let text = "Filesystem 1024-blocks Used Available Capacity Mounted on\n\
-                    /dev/disk3s1s1 971350180 10485760 500000000 3% /\n\
-                    devfs 200 200 0 100% /dev\n\
-                    /dev/disk4s1 1000 500 400 56% /Volumes/My Backup Drive\n";
-        let volumes = parse_df(text);
-        assert_eq!(volumes.len(), 2, "devfs must be filtered out");
-        assert_eq!(volumes[0].mount, "/");
-        assert_eq!(volumes[0].name, "Macintosh HD");
-        assert_eq!(volumes[0].total_bytes, 971_350_180 * 1024);
-        assert_eq!(volumes[1].mount, "/Volumes/My Backup Drive");
-        assert_eq!(volumes[1].name, "My Backup Drive");
-    }
-}
