@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 13/19
+progress: 14/20
 iteration: 1
 created: 2026-10-30
 ---
@@ -160,6 +160,18 @@ that screen from any scan.
 critical, nonsense numbers clamp instead of drawing off the bar, `basename` handles both
 separators); the volume list comes from `sysinfo`, so it is per-platform rather than `df`.
 **Falsifier:** an app that can only scan one hard-coded root.
+
+### C20 — The view stops claiming things that are gone  `[x]`
+Regaining window focus re-stats the current level and prunes nodes whose paths no longer
+exist, reporting how many vanished and the new total. Deletions made outside the app
+(Finder, terminal) therefore stop being drawn as if they were still on disk.
+**Probe:** `revalidate` command walks the current node's children with one `Path::exists`
+per child and calls `Tree::forget` on the missing ones; the UI calls it on focus, throttled
+to once every 4 seconds, and reports the count in the status line.
+**Falsifier:** a file deleted in Finder still drawn after the window regains focus.
+**Note:** this is deliberately shallow, one level at a time, because a deep re-stat on every
+focus would cost as much as a rescan. Deeper staleness is refreshed when you drill in, or by
+Rescan.
 
 ## Test Strategy
 

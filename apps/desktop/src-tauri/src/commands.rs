@@ -199,6 +199,55 @@ pub fn view(
     Ok(build_view(&scan.tree, root, &ViewOptions::default()))
 }
 
+#[derive(Debug, Serialize)]
+pub struct FreshnessReport {
+    /// How many nodes in this view no longer exist on disk.
+    pub removed: u32,
+    pub bytes: u64,
+    pub files: u64,
+    pub view: Vec<ViewNode>,
+}
+
+/// Drop view nodes whose paths have disappeared since the scan.
+///
+/// The tree is a snapshot, so anything deleted outside the app keeps being drawn. This
+/// re-stats the current level only, which is a handful of metadata calls, and prunes what is
+/// gone: cheap enough to run whenever the window regains focus.
+#[tauri::command]
+pub fn revalidate(
+    state: State<'_, AppState>,
+    scan_id: String,
+    node_id: Option<u64>,
+) -> Result<FreshnessReport, String> {
+    let mut scans = lock_scans(&state)?;
+    let scan = scans.get_mut(&scan_id).ok_or("unknown scan")?;
+
+    let root = node_id.map_or(scan.tree.root, |id| id as usize);
+    if root >= scan.tree.nodes.len() {
+        return Err("node is not part of this scan".to_string());
+    }
+
+    let children: Vec<usize> = scan.tree.node(root).children.clone();
+    let mut gone: Vec<usize> = Vec::new();
+    for id in children {
+        if !scan.tree.path_of(id).exists() {
+            gone.push(id);
+        }
+    }
+
+    let removed = gone.len() as u32;
+    if removed > 0 {
+        scan.tree.forget(&gone);
+    }
+
+    Ok(FreshnessReport {
+        removed,
+        bytes: scan.tree.total_bytes(),
+        files: scan.tree.file_count(),
+        view: build_view(&scan.tree, root, &ViewOptions::default()),
+    })
+}
+
 #[tauri::command]
 pub fn collect(
     state: State<'_, AppState>,

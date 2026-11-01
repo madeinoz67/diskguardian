@@ -4,7 +4,15 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { BranchDone, CollectState, DeleteReport, ScanResponse, ViewNode, VolumeInfo } from './types'
+import type {
+  BranchDone,
+  CollectState,
+  DeleteReport,
+  FreshnessReport,
+  ScanResponse,
+  ViewNode,
+  VolumeInfo,
+} from './types'
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
@@ -43,6 +51,12 @@ export async function scan(path: string): Promise<ScanResponse> {
 export async function view(scanId: string, nodeId: number | null): Promise<ViewNode[]> {
   if (!isTauri) return demoView(nodeId)
   return invoke<ViewNode[]>('view', { scanId, nodeId })
+}
+
+/** Drop view nodes whose paths have vanished since the scan. */
+export async function revalidate(scanId: string, nodeId: number | null): Promise<FreshnessReport> {
+  if (!isTauri) return { removed: 0, bytes: 0, files: 0, view: [] }
+  return invoke<FreshnessReport>('revalidate', { scanId, nodeId })
 }
 
 /** Read the collector without mutating it. Also the cheapest IPC probe after a scan. */

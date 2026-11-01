@@ -29,6 +29,13 @@ export interface CollectState {
   needs_confirmation: boolean
 }
 
+export interface FreshnessReport {
+  removed: number
+  bytes: number
+  files: number
+  view: ViewNode[]
+}
+
 export interface BranchDone {
   name: string
   bytes: number

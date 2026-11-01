@@ -15,6 +15,7 @@ pub fn run() {
             commands::peek_root,
             commands::view,
             commands::collect,
+            commands::revalidate,
             commands::collected,
             commands::delete_collected,
             commands::reveal,

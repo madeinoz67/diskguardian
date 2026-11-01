@@ -621,6 +621,15 @@ async function boot(): Promise<void> {
 
   el<HTMLButtonElement>('scan-folder').addEventListener('click', () => void pickFolder())
 
+  // The tree is a snapshot; deletions made outside the app are invisible until something
+  // re-reads the disk. Regaining focus is the moment a person expects it to be current.
+  if (bridge.isTauri) {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) void refreshIfStale()
+    })
+  }
+
   // Drop a disk or folder on the window, the way DaisyDisk does it.
   if (bridge.isTauri) {
     const { getCurrentWebview } = await import('@tauri-apps/api/webview')
@@ -633,6 +642,32 @@ async function boot(): Promise<void> {
         }
       }
     })
+  }
+}
+
+let lastRefresh = 0
+
+/** Re-stat the current level and prune anything that has disappeared. */
+async function refreshIfStale(): Promise<void> {
+  if (!state.scanId || branches) return
+  if (Date.now() - lastRefresh < 4000) return
+  lastRefresh = Date.now()
+
+  const frame = state.stack[state.stack.length - 1]
+  if (!frame) return
+
+  try {
+    const report = await bridge.revalidate(state.scanId, frame.nodeId)
+    if (report.removed === 0) return
+
+    frame.view = report.view
+    sunburst.setView(report.view)
+    renderLegend()
+    setStatus(
+      `${report.removed} item${report.removed === 1 ? '' : 's'} no longer on disk · ${formatBytes(report.bytes)}`,
+    )
+  } catch (error) {
+    showError(`Could not refresh the view: ${String(error)}`)
   }
 }
 
