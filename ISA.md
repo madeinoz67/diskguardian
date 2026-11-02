@@ -102,8 +102,19 @@ The default action moves collected items to the macOS Trash, and a file deleted 
 
 ### C13 — Scanning does not freeze the window  `[x]`
 While a scan runs, the window still paints, the UI reports progress, and clicks land. A scan of
-another path *may* be started; the newest scan owns the screen and the older one finishes unseen.
+another path *may* be started; the newest scan owns the screen, and the older one is stopped
+rather than left to finish unseen.
 **Falsifier:** window beachballs or progress stops updating during the scan.
+**CORRECTED 2026-11-02 after review — the mechanism sentence above was not yet true.** The first
+version of this claim said the older scan "finishes unseen", which the scan token does not
+deliver: `scan-progress` events carry no scan identity, so the *new* scan's listener accepts the
+old scan's branch reports and applies them by name. Two trees sharing a child name (`src`,
+`target`, `node_modules`) mark the new scan's petal done at the old scan's width. The token stops
+the stale listener from painting; it never stopped the fresh one from listening. A review lane
+found this by reading the event plumbing after the fix had been verified by screenshot — the
+screenshots were of a tree with no shared child names. The fix is a per-scan nonce carried on
+every progress event and on the progress emitter, gated so a cancelled walk emits nothing; it is
+folded with the cancellation branch below.
 **Verified 2026-11-02 on the built app**, twice (a 17-second scan of a million-file tree and a
 volume scan): the progress counter climbed (`Measuring… 9 of 21 done`), petals grew while it
 ran, and clicks were accepted mid-scan — including the breadcrumb that starts a second scan.
@@ -113,8 +124,8 @@ against a running volume scan, a 12 MB scan started behind it had still not comp
 later, because both walks compete for one rayon pool and there is no cancellation path through
 the IPC. The scan token stops the two from corrupting each other's view, which is what the
 screenshot before the fix showed — one scan's breadcrumb over another's totals and a white petal,
-wedged for ever. Serving two scans fairly is a different piece of work, now on the roadmap as
-R13 rather than implied by this claim.
+wedged for ever. Serving two scans fairly is a different piece of work, on the roadmap as **R14** rather than
+implied by this claim. (This paragraph previously said R13, which is the duplicate finder.)
 
 ### C14 — A million-node tree scans near the filesystem's own floor  `[x]`
 A scan of a ≥1M-node developer tree completes in **no more than 1.15× the wall clock of
