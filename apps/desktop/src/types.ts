@@ -80,6 +80,34 @@ export interface TrashStats {
   supported: boolean
 }
 
+/** One APFS local snapshot, named the way `tmutil` names it. */
+export interface LocalSnapshot {
+  name: string
+  /** `2026-11-01-085943` — the stamp `tmutil deletelocalsnapshots` accepts. */
+  stamp: string
+}
+
+export interface SnapshotReport {
+  /** False where the platform has no local Time Machine snapshots to speak of. */
+  supported: boolean
+  mount: string
+  snapshots: LocalSnapshot[]
+  /** Why the listing failed, when it did. A failed listing is never shown as "none". */
+  error: string | null
+}
+
+export interface PurgeReport {
+  purged: boolean
+  /** The OS refused for want of administrator rights — a different answer for the user. */
+  refused: boolean
+  /** What to tell the user, in full sentences, whatever happened. */
+  message: string
+  /** Measured free-space change across the attempt. Signed: others may take space too. */
+  freed_bytes: number
+  /** The snapshots that are still there afterwards. */
+  remaining: LocalSnapshot[]
+}
+
 export interface EmptyReport {
   freed: number
   removed: number

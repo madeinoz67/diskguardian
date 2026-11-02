@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 19/26
+progress: 19/27
 iteration: 1
 created: 2026-10-30
 ---
@@ -316,6 +316,36 @@ spent budget presented as "no duplicates".
 **Honest limit:** the panel offers collection, not deletion; the clone caveat is the reason,
 and clone detection remains R6.
 
+### C27 — Local snapshots are visible, and the purge tells the truth about privilege  `[ ]`
+The overview reports how many APFS local Time Machine snapshots the boot volume holds and when
+each was taken. Nothing invents a size for them: macOS reports existence, not occupancy, so the
+list carries timestamps and the only measured figure — how far free space actually moved — is
+read before and after a purge attempt. Purging runs `tmutil` **as the user and never elevated**;
+when macOS refuses for want of administrator rights, the refusal is its own reported outcome,
+naming the cause and the route that works, rather than a silent "0 freed".
+**Probe:** `cargo test -p diskguardian-app` — 5 unit tests on `parse_listing`/`is_stamp` (the
+header and the empty answer are not snapshots, seven malformed stamps are ignored, a snapshot
+name inside a sentence line is not a snapshot, stamps are the only accepted date shape) and 2
+IPC tests driving the real command surface through an injected `tmutil` runner: the root-rights
+refusal returns `refused: true`, `purged: false`, a message naming administrator rights and
+System Settings, and the snapshot still listed; a success returns `purged: true` with an empty
+list; and an unconfirmed purge is refused before anything runs. `bun test` on `snapshots.ts`
+proves no size is ever rendered beside a snapshot, that a failed listing is never rendered as
+an empty one, and that purge is offered only when there is something to purge.
+**Falsifier:** a per-snapshot size shown, a failed listing shown as "none", a refusal shown as
+success, or a privileged delete call site added anywhere.
+**Why this claim is still open despite green tests:** the panel has never been looked at. The
+bundle was rebuilt and launched to photograph it, and the screen locked before the capture, so
+the one check this project requires for appearance — a screenshot whose pixels someone looked
+at — did not happen. Everything else is verified: the wiring is closed by `tsc`, by every
+element id `main.ts` requests existing in `index.html`, and by the model tests. The claim closes
+on the first visual pass, which is one launch away.
+**Not observed, stated rather than glossed:** the purge has never been executed against real
+snapshots. This machine holds 24 of them and deleting them was not authorised, so the command
+path is proven through the injected runner and the real refusal branch is inferred from
+tmutil's own `requires root privileges` string. The first real purge is the observation that
+closes that gap.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -381,7 +411,10 @@ increment opens.
 - **R13 — Duplicate finder**: DONE (C24 engine, C26 panel). Size, then head/tail, then full
   BLAKE3; content-identical with the clone caveat shown as visible text.
 - **R3 — Admin scanning**: read restricted petals by scanning as root. Largest real win.
-- **R4 — APFS local snapshots**: list and purge; invisible in Finder, often tens of GB.
+- **R4 — APFS local snapshots**: DONE (C27) as far as this project's rules allow. Listed with
+  timestamps, purge offered as the user, refusal reported in words. A privileged purge stays
+  unbuilt by decision (2026-11-02): measurement is the only thing that runs elevated, and the
+  privileged side has no delete call sites.
 - **R5 — Hidden space**: purgeable, other APFS volumes, still-hidden items as a virtual node.
 - **R6 — APFS clone detection**: accuracy, so clones stop counting twice.
 - **R7 — Reveal in Finder + Quick Look wiring** on the selected petal.
@@ -408,6 +441,19 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-02 — Local snapshots shipped as far as the rules allow (C27, open on appearance).
+  A "Local snapshots" row on the overview, a panel listing every APFS local Time Machine
+  snapshot with its timestamp and no invented size, and a purge that runs `tmutil` as the user
+  and reports a macOS refusal as its own outcome with the cause and the route that works.
+  Principal decision recorded: a privileged purge stays unbuilt — measurement is the only thing
+  that runs elevated, and the privileged side has no delete call sites. 5 unit tests on the
+  listing parser, 2 IPC tests through an injected runner, 10 frontend model tests, and a
+  bridge test that pins the browser demo to never claim a purge succeeded.
+  Two things are honestly not done: the purge has never run against real snapshots (24 exist on
+  this machine and deleting them was not authorised), and the panel has never been photographed
+  — the bundle was rebuilt and launched, and the screen locked before the capture. The claim
+  stays open on that second point alone.
 
 - 2026-11-02 — C18 closed on one click, and the honest reading is that nothing was broken.
   A `+` in the contents list of the built app moved the collector from 0 bytes to 4 MB, turned

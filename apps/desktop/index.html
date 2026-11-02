@@ -95,6 +95,26 @@
         </div>
       </div>
 
+      <div id="snapshots" hidden>
+        <header class="cleanup-head">
+          <h1>Local snapshots</h1>
+          <div class="cleanup-controls">
+            <button id="snapshots-run" type="button">Refresh</button>
+            <button id="snapshots-purge" type="button" class="danger" disabled>
+              Delete snapshots…
+            </button>
+            <button id="snapshots-close" type="button">Close</button>
+          </div>
+        </header>
+        <div class="snapshots-body">
+          <p id="snapshots-headline" class="duplicates-headline"></p>
+          <p id="snapshots-note" class="duplicates-note" hidden></p>
+          <!-- The purge outcome, verbatim from the backend — refusal text included. -->
+          <p id="snapshots-message" class="snapshots-message" hidden></p>
+          <div id="snapshots-list" class="cleanup-list"></div>
+        </div>
+      </div>
+
       <div id="overview" hidden>
         <div class="overview-inner">
           <h1>Disks and folders</h1>

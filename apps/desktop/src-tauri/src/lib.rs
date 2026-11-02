@@ -1,6 +1,7 @@
 pub mod admin;
 mod commands;
 mod platform;
+pub mod snapshots;
 pub mod state;
 
 use state::AppState;
@@ -32,6 +33,8 @@ pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             commands::reveal,
             commands::quicklook,
             admin::scan_restricted,
+            snapshots::local_snapshots,
+            snapshots::purge_local_snapshots,
         ])
 }
 

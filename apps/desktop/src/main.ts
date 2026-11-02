@@ -4,13 +4,15 @@ import { Sunburst } from './sunburst'
 import { assignHues, colorFor } from './layout'
 import type { Arc } from './layout'
 import { formatBytes, formatCount } from './format'
-import type { CleanupItem, ViewNode, VolumeInfo } from './types'
+import type { CleanupItem, SnapshotReport, ViewNode, VolumeInfo } from './types'
 import { basename, gaugeFor, toneColor } from './overview'
 import { applyBranch, advance, findChildByName, partialView, startBranches } from './partial'
 import type { PartialBranch } from './partial'
 import { ADMIN_REFUSED_STATUS, adminStatus, isMacPlatform } from './admin'
 import { duplicatesModel } from './duplicates'
 import type { DuplicateGroupModel } from './duplicates'
+import { purgeMessage, snapshotsModel } from './snapshots'
+import type { SnapshotsModel } from './snapshots'
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id)
@@ -41,6 +43,27 @@ const duplicatesPanel = el<HTMLElement>('duplicates')
 const duplicatesHeadline = el<HTMLElement>('duplicates-headline')
 const duplicatesNote = el<HTMLElement>('duplicates-note')
 const duplicatesList = el<HTMLElement>('duplicates-list')
+const snapshotsPanel = el<HTMLElement>('snapshots')
+const snapshotsHeadline = el<HTMLElement>('snapshots-headline')
+const snapshotsNote = el<HTMLElement>('snapshots-note')
+const snapshotsMessage = el<HTMLElement>('snapshots-message')
+const snapshotsList = el<HTMLElement>('snapshots-list')
+const snapshotsPurge = el<HTMLButtonElement>('snapshots-purge')
+
+/**
+ * The three fullscreen overlays describe one thing at a time. Opening one closes the
+ * others, so they can never stack — a refusal message from one panel must not be read as
+ * the answer to a question asked in another.
+ */
+const overlays = [cleanupPanel, duplicatesPanel, snapshotsPanel]
+
+function openOverlay(panel: HTMLElement): void {
+  for (const other of overlays) other.hidden = other !== panel
+}
+
+function closeOverlays(): void {
+  for (const panel of overlays) panel.hidden = true
+}
 
 const sunburst = new Sunburst(canvas)
 
@@ -182,9 +205,8 @@ function showError(text: string): void {
 
 async function scanPath(path: string): Promise<void> {
   overview.hidden = true
-  // Both panels describe the scan that was on screen; a new scan makes them stale.
-  cleanupPanel.hidden = true
-  duplicatesPanel.hidden = true
+  // Every panel describes the screen that was on it; a new scan makes them stale.
+  closeOverlays()
   hideAdminMeasurement()
   setStatus('Scanning…')
   document.body.classList.add('scanning')
@@ -764,6 +786,36 @@ async function showOverview(): Promise<void> {
     console.error('trash stats failed', error)
   }
 
+  // Time Machine's local snapshots are invisible in Finder and charged to the volume, so
+  // the overview names them beside the Trash. The row exists only where the platform has
+  // any: a permanently empty row on Linux is noise.
+  try {
+    const snapshots = await bridge.localSnapshots()
+    if (snapshots.supported) {
+      const model = snapshotsModel(snapshots)
+      volumeList.append(
+        volumeRow({
+          name: 'Local snapshots',
+          mount: snapshots.mount,
+          total_bytes: 0,
+          free_bytes: 0,
+          // Even in one line, a failed listing must not read as "none".
+          detail: model.error !== null ? 'the snapshot list could not be read' : model.headline,
+          gauge: false,
+          actionLabel: 'Review',
+          onAction: () => {
+            // A refusal from a previous look must not sit above a fresh listing.
+            snapshotsMessage.hidden = true
+            openOverlay(snapshotsPanel)
+            void refreshSnapshots()
+          },
+        }),
+      )
+    }
+  } catch (error) {
+    console.error('snapshot listing failed', error)
+  }
+
   for (const volume of volumes) {
     const gauge = gaugeFor(volume)
     volumeList.append(
@@ -845,13 +897,11 @@ async function boot(): Promise<void> {
 
   el<HTMLButtonElement>('scan-folder').addEventListener('click', () => void pickFolder())
   el<HTMLButtonElement>('cleanup-open').addEventListener('click', () => {
-    duplicatesPanel.hidden = true
-    cleanupPanel.hidden = false
+    openOverlay(cleanupPanel)
     void refreshCleanup()
   })
   el<HTMLButtonElement>('duplicates-open').addEventListener('click', () => {
-    cleanupPanel.hidden = true
-    duplicatesPanel.hidden = false
+    openOverlay(duplicatesPanel)
     void refreshDuplicates()
   })
   el<HTMLButtonElement>('duplicates-close').addEventListener('click', () => {
@@ -859,6 +909,11 @@ async function boot(): Promise<void> {
   })
   el<HTMLButtonElement>('duplicates-run').addEventListener('click', () => void refreshDuplicates())
   el<HTMLSelectElement>('duplicates-floor').addEventListener('change', () => void refreshDuplicates())
+  el<HTMLButtonElement>('snapshots-close').addEventListener('click', () => {
+    snapshotsPanel.hidden = true
+  })
+  el<HTMLButtonElement>('snapshots-run').addEventListener('click', () => void refreshSnapshots())
+  snapshotsPurge.addEventListener('click', () => void purgeSnapshotsNow())
   el<HTMLButtonElement>('cleanup-close').addEventListener('click', () => {
     cleanupPanel.hidden = true
   })
@@ -1145,6 +1200,92 @@ async function refreshDuplicates(): Promise<void> {
     )
   } catch (error) {
     showError(`Duplicate search failed: ${String(error)}`)
+  }
+}
+
+// ─── local snapshots ────────────────────────────────────────────────────────────────
+//
+// The words live in snapshots.ts, where they are tested: no size is ever invented for a
+// snapshot, a failed listing is never shown as an empty one, and the purge outcome is the
+// backend's own sentence. This half only builds the rows and asks before deleting.
+
+/** The count behind the confirm dialogue; refreshed whenever the panel re-lists. */
+let snapshotCount = 0
+
+function renderSnapshots(report: SnapshotReport): SnapshotsModel {
+  const model = snapshotsModel(report)
+  snapshotsHeadline.textContent = model.headline
+  snapshotsNote.hidden = model.error === null && model.empty === null
+  snapshotsNote.textContent = model.error ?? model.empty ?? ''
+  // A failure and a quiet empty answer are different sentences, and look different too.
+  snapshotsNote.classList.toggle('failed', model.error !== null)
+
+  snapshotsList.replaceChildren()
+  for (const row of model.rows) {
+    const item = document.createElement('div')
+    item.className = 'snapshot-row'
+    // The readable stamp is the text; the raw `tmutil` name stays reachable as a tooltip.
+    item.title = row.name
+    const when = document.createElement('span')
+    when.className = 'snapshot-when'
+    when.textContent = row.when
+    item.append(when)
+    if (row.newest) {
+      const badge = document.createElement('span')
+      badge.className = 'snapshot-new'
+      badge.textContent = 'newest'
+      item.append(badge)
+    }
+    snapshotsList.append(item)
+  }
+
+  snapshotCount = model.rows.length
+  snapshotsPurge.disabled = !model.canPurge
+  snapshotsPurge.title = model.canPurge
+    ? 'Ask macOS to delete every local snapshot on the boot volume, as this user'
+    : 'Offered only when the listing worked and found something to delete'
+  return model
+}
+
+async function refreshSnapshots(): Promise<void> {
+  try {
+    const model = renderSnapshots(await bridge.localSnapshots())
+    setStatus(model.error ?? model.headline)
+  } catch (error) {
+    // The command itself failed, so nothing is known — and nothing is deletable.
+    snapshotsPurge.disabled = true
+    showError(`Snapshot listing failed: ${String(error)}`)
+  }
+}
+
+/**
+ * Purging is immediate and not recoverable, so it asks with the count attached — the one
+ * number macOS does report. When macOS refuses for want of administrator rights, the
+ * report says so in words that name the cause and the route that works; those words are
+ * shown as they arrive, never paraphrased.
+ */
+async function purgeSnapshotsNow(): Promise<void> {
+  if (snapshotCount === 0) return
+  const plural = snapshotCount === 1 ? '' : 's'
+  const ok = window.confirm(
+    `Delete the ${snapshotCount} local snapshot${plural} on the boot volume?\n\n` +
+      `Snapshot${plural} deleted this way are gone for good — they do not go to the Trash.`,
+  )
+  if (!ok) return
+
+  snapshotsPurge.disabled = true
+  try {
+    const report = await bridge.purgeLocalSnapshots(true)
+    const message = purgeMessage(report)
+    snapshotsMessage.textContent = message
+    snapshotsMessage.hidden = false
+    await refreshSnapshots()
+    // The overview row behind this panel counts the same snapshots; keep it true.
+    if (!overview.hidden) await showOverview()
+    setStatus(message)
+  } catch (error) {
+    showError(`Snapshot purge failed: ${String(error)}`)
+    snapshotsPurge.disabled = false
   }
 }
 
