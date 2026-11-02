@@ -234,6 +234,7 @@ fn measure(path: &Path, deadline: Instant) -> Tree {
                 partial: true,
                 link_skipped: false,
                 missing: false,
+                newest_modified: None,
                 note: Some(err.to_string()),
             }],
             root: 0,
