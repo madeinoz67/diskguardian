@@ -30,6 +30,35 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
 
+/// How many times a syscall interrupted by a signal is retried before the directory is
+/// treated as unreadable. A bound rather than an infinity: a tree that answers `EINTR`
+/// forever is unreadable in practice, and a scan must not spin on it.
+const INTERRUPT_RETRIES: u32 = 8;
+
+/// Run a directory syscall, retrying the one error that is not about the directory.
+///
+/// `EINTR` means a signal arrived mid-call; it says nothing about permission or existence.
+/// Under the parallel walk it is routine, and treating it as a permission wall lies in the
+/// worst direction — it reports measurable space as unmeasurable, draws a purple petal on a
+/// directory the user can open, and can offer an administrator pass for nothing.
+///
+/// Measured 2026-11-02 on a ~1M-node tree: a ten-thread scan produced 10–30 of these per
+/// pass, hiding 0–1.8 GB while a serial walk and `du` saw none. One thread produced one.
+fn retry_interrupted<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut interruptions = 0u32;
+    loop {
+        match op() {
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {
+                interruptions += 1;
+                if interruptions > INTERRUPT_RETRIES {
+                    return Err(err);
+                }
+            }
+            other => return other,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ScanError {
     #[error("cannot read {path}: {source}")]
@@ -222,7 +251,9 @@ impl Builder {
         let mut own_bytes = 0u64;
         let mut partial = false;
 
-        let read_dir = match fs::read_dir(path) {
+        // An interrupted `read_dir` is retried; anything else is a real answer about the
+        // directory and becomes a restricted node.
+        let read_dir = match retry_interrupted(|| fs::read_dir(path)) {
             Ok(rd) => rd,
             Err(err) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
@@ -233,10 +264,23 @@ impl Builder {
         let mut dirs: Vec<fs::DirEntry> = Vec::new();
         let mut files: Vec<fs::DirEntry> = Vec::new();
 
-        for entry in read_dir {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => {
+        let mut entries = read_dir;
+        let mut interruptions = 0u32;
+        loop {
+            let entry = match entries.next() {
+                None => break,
+                Some(Ok(entry)) => entry,
+                // The same rule as the open: a signal is not a defect in the tree, so ask
+                // again. Bounded, so a directory that always answers `EINTR` is counted as
+                // a failure rather than hanging the scan.
+                Some(Err(err))
+                    if err.kind() == std::io::ErrorKind::Interrupted
+                        && interruptions < INTERRUPT_RETRIES =>
+                {
+                    interruptions += 1;
+                    continue;
+                }
+                Some(Err(_)) => {
                     self.errors.fetch_add(1, Ordering::Relaxed);
                     partial = true;
                     continue;
@@ -467,4 +511,67 @@ fn root_name(path: &Path) -> String {
         || path.display().to_string(),
         |s| s.to_string_lossy().into_owned(),
     )
+}
+
+#[cfg(test)]
+mod interrupt_tests {
+    use super::{retry_interrupted, INTERRUPT_RETRIES};
+    use std::io;
+
+    fn interrupted<T>() -> io::Result<T> {
+        Err(io::Error::from(io::ErrorKind::Interrupted))
+    }
+
+    #[test]
+    fn an_interrupted_call_is_retried_until_it_answers() {
+        let mut calls = 0;
+        let result = retry_interrupted(|| {
+            calls += 1;
+            if calls < 3 {
+                interrupted()
+            } else {
+                Ok(7)
+            }
+        });
+        assert_eq!(result.ok(), Some(7), "a signal is not an answer");
+        assert_eq!(calls, 3, "the call is asked again, not abandoned");
+    }
+
+    #[test]
+    fn a_persistent_interruption_gives_up_rather_than_spinning() {
+        let mut calls = 0;
+        let result: io::Result<()> = retry_interrupted(|| {
+            calls += 1;
+            interrupted()
+        });
+        assert!(result.is_err(), "the error survives the retries");
+        assert_eq!(
+            calls,
+            INTERRUPT_RETRIES + 1,
+            "bounded: a directory that always answers EINTR must not hang the scan"
+        );
+    }
+
+    #[test]
+    fn a_real_error_is_answered_the_first_time() {
+        // The property that keeps the honesty invariant pointing the right way: a genuine
+        // permission wall must become a restricted node immediately, never be retried into
+        // a timeout, and never be swallowed.
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::NotFound,
+            io::ErrorKind::NotADirectory,
+        ] {
+            let mut calls = 0;
+            let result: io::Result<()> = retry_interrupted(|| {
+                calls += 1;
+                Err(io::Error::from(kind))
+            });
+            assert_eq!(result.err().map(|e| e.kind()), Some(kind));
+            assert_eq!(
+                calls, 1,
+                "{kind:?} is a statement about the tree, not a signal"
+            );
+        }
+    }
 }
