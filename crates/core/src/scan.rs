@@ -435,7 +435,9 @@ pub fn allocation(meta: &fs::Metadata) -> u64 {
     }
 }
 
-fn is_multilink(meta: &fs::Metadata) -> bool {
+/// Shared with the duplicate finder: a file with more than one name is one inode,
+/// and deleting any single name frees nothing.
+pub(crate) fn is_multilink(meta: &fs::Metadata) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;

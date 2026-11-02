@@ -242,6 +242,31 @@ ship/kill sizing rule therefore has no real-machine number yet.
 pass. Prompt-per-session needs the helper to outlive a single job, with a parent-death
 watchdog and an idle timeout; that is the next increment, not a shipped property.
 
+### C24 — Duplicate groups are content-identical, never a space promise  `[x]`
+A duplicate pass over a finished scan (never during one) groups only files whose whole-file
+BLAKE3 digests match, after a free size-grouping step and a 16 KiB head/tail pre-filter;
+hard-linked inodes are excluded entirely (both the zero-byte extra names and, by a fresh
+`nlink` check, the name that carries the bytes); files below the caller's floor are never
+opened; and every reported group carries the caveat that content-identical files may share
+physical storage (APFS clones), so deleting a member can free less than the group's
+`wasted_bytes`. A pass stopped by its deadline or candidate cap reports `partial` rather
+than pretending completeness, and a vanished scan root is an error rather than a silent
+"no duplicates".
+**Probe:** `cargo test -p diskguardian-core --test duplicates` — 11 tests, including a
+same-size pair differing only in the 4 KiB band between the hashed head and tail (the
+fixture that catches an implementation trusting the edges), hard-link exclusion at
+`min_bytes: 0`, and a progress-callback seam proving a file without a size twin is never
+opened. Each honesty property was verified RED by neutralising its mechanism before the
+implementation was trusted.
+**Falsifier:** any reported pair whose whole files differ, a hard-linked name proposed as a
+duplicate, a below-floor file hashed, a spent deadline reported as complete, or a group
+shown without its caveat.
+**Known gaps:** APFS clones are not detected (no `ATTR_CMNEXT_CLONEPARENT`, roadmap R6),
+which is why the caveat rides every group. Grouping starts from the tree's allocated
+sizes, so a same-content pair whose *allocations* differ (an HFS+-compressed file beside a
+raw copy of the same bytes) is not detected — a stated limit, not a silent behaviour, and
+one that can only produce false negatives, never a false "duplicate" claim.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -312,6 +337,15 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-02 — Duplicate finder shipped (C24): `crates/core/src/duplicates.rs`, a
+  cheap-first pass (size group, 8 KiB head/tail BLAKE3, whole-file BLAKE3) that runs on
+  demand over a finished scan. Hard links excluded entirely, missing nodes excluded,
+  deadline and candidate cap both report partial rather than pretending completeness,
+  and every group carries the APFS-clone caveat so the UI cannot show a space promise
+  the disk may not keep. 11 acceptance tests, each honesty property verified RED by
+  neutralising its mechanism first; one real control-flow defect caught that way (a cap
+  hit mid-group discarded the already-read pair before whole-file verification).
 
 - 2026-11-02 — Overview shipped, and the app now starts there instead of guessing at `$HOME`. Cross-platform pass alongside it: volumes come from `sysinfo` rather than `df`, reveal/Quick Look have per-OS branches (Quick Look itself is macOS-only, so elsewhere the item opens in its default handler), and the deletion guard builds its protected list per platform. Recorded honestly: two earlier scripted patches (the error banner and the post-scan collector probe) silently failed to match and never applied, so a commit claimed a diagnostic that did not exist. Every subsequent edit asserts its anchor.
 
