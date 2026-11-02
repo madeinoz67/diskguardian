@@ -1,5 +1,6 @@
 pub mod admin;
 mod commands;
+pub mod favourites;
 mod platform;
 pub mod snapshots;
 pub mod state;
@@ -36,6 +37,10 @@ pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             admin::scan_restricted,
             snapshots::local_snapshots,
             snapshots::purge_local_snapshots,
+            favourites::favourites,
+            favourites::favourite_marks,
+            favourites::favourite_node,
+            favourites::set_favourite,
         ])
 }
 

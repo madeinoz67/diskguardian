@@ -113,6 +113,30 @@ What that pass is, plainly:
   is granted Full Disk Access. Whatever could not be measured is reported with a count,
   never silently dropped.
 
+## Favourite folders
+
+Any folder you keep coming back to can be starred, and the favourites then sit at the
+top of the "Disks and folders" page — above home, Trash, snapshots and every volume —
+each with a Scan button and a star to remove it again.
+
+- **Star from the scan screen.** The contents list on the right carries a star beside
+  the `+` on every folder row, and the list's heading has one for the folder you are
+  currently inside. Starring never navigates.
+- **Unstar from the front page.** The ★ beside a favourite removes it. Unstarring
+  removes a list entry, never a file.
+- **Where the list lives.** A `favourites.json` file in the app's own data directory
+  (`~/Library/Application Support/com.madeinoz.diskguardian/` on macOS), written
+  atomically by the app itself. The webview never writes favourite state, so a webview
+  bug cannot corrupt the list; and if the file ever is unreadable, it is kept beside a
+  fresh one and the page says so rather than reading as "no favourites".
+- **"Not on this disk right now."** A favourite whose folder has been deleted, or whose
+  volume is not mounted, stays on the page with that sentence as its detail line and
+  its Scan disabled — reported, never silently dropped. It re-enables itself the moment
+  the folder exists again; until then, unstarring is the way to clear it.
+- **One folder, one row.** Starring a folder that is already a favourite — including
+  through the other spelling of a symlinked path — is a no-op. Favourite rows show no
+  size, because a size would mean walking every favourite on every page load.
+
 ## Status
 
 Early. The core loop works end to end on macOS: scan, draw, drill, collect, delete, and

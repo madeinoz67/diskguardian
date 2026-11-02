@@ -28,6 +28,10 @@ pub struct AppState {
     /// can express is "cancel the most recently registered walk", not "cancel the walk I
     /// superseded". Correcting that needs a per-request identity (ISA R14).
     pub scan_cancel: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    /// The favourite folders: a Rust-owned JSON store, resolved to the app data
+    /// directory lazily on first command use (`default()` runs before an `AppHandle`
+    /// exists). The webview reaches it only through the four favourites commands.
+    pub favourites: Mutex<crate::favourites::Favourites>,
 }
 
 impl AppState {

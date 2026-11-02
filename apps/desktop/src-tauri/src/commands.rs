@@ -69,7 +69,9 @@ pub struct DeleteOutcomeView {
     pub error: Option<String>,
 }
 
-fn lock_scans(
+/// The scans table, or why it could not be taken. `pub(crate)` so the favourites
+/// commands can resolve node paths through the same seam `reveal` uses.
+pub(crate) fn lock_scans(
     state: &AppState,
 ) -> Result<std::sync::MutexGuard<'_, HashMap<String, crate::state::Scan>>, String> {
     state
