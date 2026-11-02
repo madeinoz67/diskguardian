@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 23/28
+progress: 23/29
 iteration: 1
 created: 2026-10-30
 ---
@@ -478,6 +478,31 @@ expressible.
 lost), and `tauri.conf.json` still ships `csp: null` — the hover-label injection is fixed, but CSP
 hardening is its own decision and was deliberately not folded in.
 
+### C29 — Hidden space is accounted, not implied  `[ ]`
+A scan whose root is a volume reports the volume's own used space, and the difference between it and
+the measured tree is one "Hidden space" node whose width is that residual — decomposed into other
+volumes of the same APFS container (measured), local snapshots (counted, never sized), protected
+areas (the tree's restricted roots, named), and a "still hidden" remainder that is named rather than
+distributed. macOS' purgeable figure is shown beside the breakdown as "up to N", never as a slice of
+the residual, because the system may free space the tree already counts. A volume scan walks only
+the scanned volume's device (the boot volume group counts as one), never other disks or snapshot
+mounts, and the mounts it excluded are listed. A negative residual is reported in words with the
+petal omitted, never shown as zero silently.
+**Probe:** `cargo test -p diskguardian-core` — the residual is placed exactly (anchor = tree ± K
+gives hidden = K; no anchor gives no node); an excluded prefix and a foreign `st_dev` subtree leave
+the tree and are listed, nothing zeroed. `cargo test -p diskguardian-app` — canned `diskutil` plist
+parses, including a malformed one which yields no decomposition rather than zeros; injected capacity
+probes (purgeable absent or negative → not reported); the IPC panel payload carries the "up to"
+wording and no snapshot size. `bun test` on the model — it cannot render a snapshot size, cannot show
+a missing decomposition as "none", and cannot swallow a negative-residual note.
+**Falsifier:** a hidden petal whose bytes are not `volume used − tree total` at the moment of
+projection; a purgeable figure presented as freed or as part of the residual; a volume scan that
+enters another disk or a snapshot mount; a skipped mount absent from the report; a per-snapshot size.
+**Design:** `.claude/designs/2026-11-02-hidden-space-design.md` (acceptance rule committed before any
+scan-side measurement). Forks defaulted rather than asked (2026-11-02): purgeable shown as an
+annotation, never sliced; `objc2-foundation` accepted because it is already in the tree; the two
+fixed macOS exclusion prefixes over a general mount-table rule.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -499,6 +524,16 @@ hardening is its own decision and was deliberately not folded in.
 - **Progressive paint, not lazy loading** (2026-10-30, principal asked whether to scan on demand). Lazy expansion cannot draw this product's first frame: a petal's width IS its subtree's total, so from one `readdir` every folder would render at near zero and a 50 GB folder would look identical to an empty one. Lazy also re-walks a subtree on every re-entry unless cached, which is a full scan with extra steps. The scan now emits each root child the moment its subtree finishes and the UI draws equal-width "measuring" petals that grow into place, so the total cost is unchanged and the perceived wait collapses to about a second.
 - **Walker benchmarked against `du`, not a target** (2026-10-30, `du -sh ~/Library` = 79.6 s vs our 87.9 s on 974,623 files). The walk is within 10% of the filesystem floor for that tree, so the original "10 seconds" C14 target was invented rather than measured. **Correction (2026-11-02):** the earlier note that our kernel time is "double `du`'s, from a redundant per-directory stat" does not survive scrutiny. `sys` is summed across all threads, and this walker is parallel while `du` is single-threaded, so the comparison says nothing about extra syscalls. There is one `stat` per directory and there is no free way to remove it (the parent's directory entry does not carry the child directory's block count). R2 is therefore closed as not-a-defect rather than fixed.
 - **Delete prunes, it does not rescan** (2026-10-30). The first working version re-scanned the whole volume after every delete, which is minutes on a real disk and made the feature feel broken. `Tree::forget` now removes the deleted nodes, recomputes ancestors and re-projects the view, so the flower updates in the same frame.
+- **A volume scan is bounded by device** (2026-11-02, C29). The root's `st_dev` defines what the walk
+  enters; the APFS boot group presents System and Data as one id, which is exactly the disk a user
+  means by "the startup volume". The inode ledger alone was measured insufficient — directory
+  metadata double-counts and snapshot mounts share the device id — so two fixed macOS prefixes are
+  excluded and any directory excluded that way is listed rather than silently skipped.
+- **Purgeable space is an annotation, never a slice** (2026-11-02, C29). Measured at 164 GB on a 2 TB
+  boot container while it overlaps bytes the tree already counts; presenting it as reclaimable space,
+  or as part of the hidden residual, would double-count. It is reported as "up to N" and nothing
+  offers to purge it — the only purges in this product are the user's own snapshots (C27) and the
+  Trash (C21).
 - **Trash by default, Option for permanent** (2026-10-30). The button moves to the Trash; holding Option deletes permanently and always confirms. Trash runs over 5 GB also confirm.
 - **Favourites are Rust-owned data, not webview state** (2026-11-02, C28). A JSON store in the app
   data directory, reached only through commands. `localStorage` is for UI preferences that degrade
