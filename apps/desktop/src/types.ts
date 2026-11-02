@@ -74,3 +74,17 @@ export interface DeleteReport {
   bytes: number
   files: number
 }
+
+/** What an administrator measurement pass did to the stored tree. */
+export interface AdminScanReport {
+  patched: number
+  still_restricted: number
+  bytes: number
+  files: number
+  view: ViewNode[]
+}
+
+export interface AdminProgress {
+  measured: number
+  total: number
+}
