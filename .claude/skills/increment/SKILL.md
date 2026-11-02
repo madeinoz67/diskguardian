@@ -47,7 +47,9 @@ privileged path, or a claim in `ISA.md`, run the loop.
    and are committed so the acceptance rule is provably pre-committed.
 2. **Decide.** Read the design. Surface any genuine product fork to the principal; otherwise
    take the defensible default and say which you took. If the design refutes its own premise,
-   that is the finding — say so before building anything.
+   that is the finding — say so before building anything. A fork that cannot be defaulted
+   (doctrine, two defensible shapes, a measurement contradicting a closed claim) goes to the
+   **`panel`** skill, which reaches a decision against a rule written before it ran.
 3. **Build, RED-first.** `increment-builder` in a fresh worktree under `.worktrees/` (never
    the primary checkout). Every behaviour change lands with a test that fails without it,
    and the dispatch carries the evidence for that failure. Gate line for every commit:
@@ -74,7 +76,8 @@ privileged path, or a claim in `ISA.md`, run the loop.
    what was deferred), then push. CI runs on the push; watch it before calling the work done.
 8. **Run close.** Remove the worktree, delete the merged local branch, and record in the ISA
    what changed, what was verified and how, and what stayed open. A claim closed on a
-   screenshot says which screenshot.
+   screenshot says which screenshot. That entry is the raw material for the **`retrospective`**
+   skill, which harvests a period's worth of them; do not run a period report at a run close.
 
 ## Traps this repo has already paid for
 
