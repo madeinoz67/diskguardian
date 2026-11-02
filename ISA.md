@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 16/22
+progress: 16/23
 iteration: 1
 created: 2026-10-30
 ---
@@ -19,7 +19,8 @@ Open it and the disk draws itself as a flower: every folder a coloured petal, ev
 
 ## Out of Scope (v0.1)
 
-- Admin / root scanning. Core loop must work with user privileges only.
+- ~~Admin / root scanning~~ — **moved in scope as R3** (see C23). The core loop still works
+  with user privileges only; elevation is an optional, consented extra.
 - Cloud accounts: Dropbox, Google Drive, OneDrive, Box.
 - APFS local snapshot discovery and purge.
 - Disk image (.dmg) mounting and scanning.
@@ -33,7 +34,7 @@ Open it and the disk draws itself as a flower: every folder a coloured petal, ev
 - **A2.** It must never present logical file length where physical allocated size is the meaning.
 - **A3.** It must never silently drop unreadable directories from a total as if they were zero.
 - **A4.** The UI must never block during a scan; the window stays responsive at all times.
-- **A5.** The core loop must never require elevated privileges.
+- **A5.** The core loop must never require elevated privileges. *(Interpretive note, 2026-11-02: still true. R3 adds an optional privileged pass taken only with the user's OS-level consent; refuse it and everything except the restricted petals works as before.)*
 - **A6.** It must never render an arc whose angular width is unrelated to its allocated size.
 
 ## Claims (ideal state criteria)
@@ -51,6 +52,9 @@ A sparse fixture file whose logical length is far larger than its allocation is 
 ### C3 — Hard links counted once  `[x]`
 A fixture with several hard links to a single inode reports exactly one file's allocation for that inode, and the extra names appear as zero-size links.
 **Falsifier:** fixture test where total equals N × single-file allocation.
+**Scope note (2026-11-02):** dedup is per walk. An elevated pass walks restricted roots
+separately, so a hard link spanning a restricted root and a readable tree counts twice. A
+stated limit, not a weakening within a single walk.
 
 ### C4 — Restricted space is visible, not hidden  `[x]`
 A directory with mode 000 yields a `Restricted` node carrying a count of the entries it could not measure; the parent's total is flagged as partial.
@@ -212,6 +216,32 @@ stays visible while counting as zero.
 **Falsifier:** a deletion the user cannot see in the flower, or one that leaves the totals
 unchanged.
 
+### C23 — Restricted space is measurable with consent  `[ ]`
+With the user's explicit, OS-mediated consent, the areas drawn as purple petals are measured
+and grafted into the same tree, under the same physical-allocation rules as everything else.
+**Design:** `.claude/designs/2026-11-02-admin-scanning-design.md` (prompt-per-scan, because
+this repo has no signing identity and `SMAppService` will not register an unsigned helper on
+macOS 13+).
+**Probes (pre-committed, design §8):** graft arithmetic against a readable twin fixture; the
+helper as root against `sudo du -sk` within 1%, plus a RED control where the same pipeline
+unprivileged must recover exactly zero; mock-runtime IPC tests including injection
+invariance; one manual human run. Real-machine sizing: ship at >= 1 GB recovered, kill R3
+below 100 MB, and treat 100 MB to 1 GB as underpowered.
+**Falsifier:** a restricted root reported at a size the filesystem does not corroborate, or
+any root-level process receiving a path chosen by the UI.
+**Honest limit:** root does not bypass TCC, so Full Disk Access-protected petals (Mail,
+Messages) may stay restricted. Reported, never hidden.
+**Status 2026-11-02 (merged, 40d239b):** AC1 and AC3 closed — graft arithmetic including the
+readable-twin tolerance, and 14 IPC tests covering the declined dialog, an unknown scan, a
+mismatched root, helper stderr, and hostile names that stay inert in the job file while the
+dialog source and argv remain byte-identical to the fixed template. The helper is
+mechanically pinned as having no delete callsites. **Not closed:** AC2's elevated arm (needs
+sudo, which the builder correctly refused to automate) and AC4 (a manual human run). The
+ship/kill sizing rule therefore has no real-machine number yet.
+**Known gap against the principal's cadence decision:** this slice still prompts once per
+pass. Prompt-per-session needs the helper to outlive a single job, with a parent-death
+watchdog and an idle timeout; that is the next increment, not a shipped property.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -234,6 +264,21 @@ unchanged.
 - **Walker benchmarked against `du`, not a target** (2026-10-30, `du -sh ~/Library` = 79.6 s vs our 87.9 s on 974,623 files). The walk is within 10% of the filesystem floor for that tree, so the original "10 seconds" C14 target was invented rather than measured. **Correction (2026-11-02):** the earlier note that our kernel time is "double `du`'s, from a redundant per-directory stat" does not survive scrutiny. `sys` is summed across all threads, and this walker is parallel while `du` is single-threaded, so the comparison says nothing about extra syscalls. There is one `stat` per directory and there is no free way to remove it (the parent's directory entry does not carry the child directory's block count). R2 is therefore closed as not-a-defect rather than fixed.
 - **Delete prunes, it does not rescan** (2026-10-30). The first working version re-scanned the whole volume after every delete, which is minutes on a real disk and made the feature feel broken. `Tree::forget` now removes the deleted nodes, recomputes ancestors and re-projects the view, so the flower updates in the same frame.
 - **Trash by default, Option for permanent** (2026-10-30). The button moves to the Trash; holding Option deletes permanently and always confirms. Trash runs over 5 GB also confirm.
+- **Admin scanning is prompt-per-session, not a signed helper** (2026-11-02; cadence set by the
+  principal, 2026-11-02: "one per privileged session"). The first privileged pass raises the
+  OS prompt; later passes in the same app run reuse that helper rather than asking again. The
+  helper must therefore die with the app and after an idle timeout, since a long-lived root
+  process is a wider window than a one-shot: both are pinned by tests.
+  The repo has no signing identity and `SMAppService` will not register an unsigned daemon on
+  macOS 13+, so the signed path is unavailable rather than merely harder. The helper is a
+  file-driven binary behind a launcher-agnostic job/results protocol, so a future signed runner
+  replaces one module and no protocol.
+- **Measurement only runs elevated** (2026-11-02). The privileged helper has no delete call
+  sites; deletion stays in the unprivileged app behind the unchanged guard. Visibility of a
+  protected path must never become deletability of it, and a test pins that.
+- **Disk-derived strings never reach a shell** (2026-11-02). The `osascript` call is a fixed
+  template whose only interpolations are two app-generated, charset-asserted paths, so a
+  folder named to look like shell syntax is inert.
 - **Narrow deletion guard** (2026-10-30, from a failing test that was right). Protecting `/private` and `/usr` wholesale refused the user's own temp directory (through the `/tmp` symlink) and every Homebrew cache. The guard now names the system's own trees, and a second test pins the narrow behaviour so a future "fix" cannot re-widen it.
 
 ## Roadmap — DaisyDisk parity (opened 2026-11-02)
