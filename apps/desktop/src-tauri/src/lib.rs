@@ -24,6 +24,7 @@ pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             commands::revalidate,
             commands::trash_stats,
             commands::cleanup,
+            commands::duplicates,
             admin::admin_authorised,
             commands::empty_trash,
             commands::collected,

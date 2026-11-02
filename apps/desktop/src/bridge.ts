@@ -10,6 +10,7 @@ import type {
   BranchDone,
   CollectState,
   DeleteReport,
+  DuplicateReport,
   FreshnessReport,
   CleanupReport,
   EmptyReport,
@@ -66,6 +67,20 @@ export async function cleanup(
 ): Promise<CleanupReport> {
   if (!isTauri) return { candidates: [], biggest: [], recent: [], total_candidate_bytes: 0 }
   return invoke<CleanupReport>('cleanup', { scanId, minBytes, ageDays, newer })
+}
+
+/**
+ * Content-identical files in a finished scan. Read-only: the panel proposes, the collector
+ * disposes. `budgetMs` bounds the pass so a click returns; the report says `partial` when it
+ * ran out of time rather than pretending it found everything.
+ */
+export async function duplicates(
+  scanId: string,
+  minBytes: number,
+  budgetMs?: number,
+): Promise<DuplicateReport> {
+  if (!isTauri) return demoDuplicates(minBytes)
+  return invoke<DuplicateReport>('duplicates', { scanId, minBytes, budgetMs })
 }
 
 export async function trashStats(): Promise<TrashStats> {
@@ -348,6 +363,37 @@ function demoCollect(nodeId: number, add: boolean): CollectState {
     count: demoCollected.size,
     ids: [...demoCollected],
     needs_confirmation: topLevel || demoCollectorTotal() >= 5 * GB,
+  }
+}
+
+function demoDuplicates(minBytes: number): DuplicateReport {
+  const bytes = 128 * 1024 * 1024
+  const empty: DuplicateReport = {
+    groups: [],
+    partial: false,
+    files_hashed: 0,
+    errors: 0,
+    excluded_links: 0,
+    duration_ms: 40,
+  }
+  if (minBytes > bytes) return empty
+
+  return {
+    ...empty,
+    files_hashed: 2,
+    groups: [
+      {
+        bytes_each: bytes,
+        wasted_bytes: bytes,
+        // Empty on purpose: the browser demo has no engine, so the panel shows its own
+        // fallback wording rather than pretending to quote one.
+        caveat: '',
+        members: [
+          { node: 1001, path: '/Users/you/Library/Caches/keynote.mov', keep: false },
+          { node: 2001, path: '/Users/you/Archive/keynote copy.mov', keep: true },
+        ],
+      },
+    ],
   }
 }
 

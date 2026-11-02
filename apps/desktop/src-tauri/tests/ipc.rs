@@ -865,3 +865,189 @@ fn template_inputs_outside_the_asserted_charset_are_refused() {
     )
     .is_ok());
 }
+
+// ─── duplicates ───────────────────────────────────────────────────────────────────────
+//
+// The engine's own tests prove the hashing; these prove the command the panel actually
+// calls: the JSON the frontend sends, the shape it gets back, and the two honesty
+// properties the UI is not allowed to lose — the caveat rides every group, and a pass
+// that ran out of time says so instead of reporting "no duplicates".
+
+/// A scan of a directory holding two content-identical files in different folders plus a
+/// same-size file that differs in the middle, so the digest stage has real work to do.
+fn seed_duplicates() -> (tauri::App<MockRuntime>, String) {
+    let app = build();
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(dir.path().join("a")).expect("mkdir a");
+    fs::create_dir_all(dir.path().join("b")).expect("mkdir b");
+
+    let payload = vec![0xA5u8; 256 * 1024];
+    fs::write(dir.path().join("a/report.pdf"), &payload).expect("write a");
+    fs::write(dir.path().join("b/report copy.pdf"), &payload).expect("write b");
+
+    // Same allocation, different content: admitted to the size group, refused by the hash.
+    let mut different = payload.clone();
+    different[100] = 0x5A;
+    fs::write(dir.path().join("b/other.pdf"), &different).expect("write c");
+
+    let tree = diskguardian_core::scan(dir.path(), &Default::default()).expect("scan");
+    // Leak the tempdir so the paths in the tree stay valid for this test.
+    std::mem::forget(dir);
+    let scan_id = app.state::<AppState>().insert(tree);
+    (app, scan_id)
+}
+
+#[test]
+fn duplicates_finds_the_identical_pair_and_carries_the_caveat() {
+    let (app, scan_id) = seed_duplicates();
+    let webview = webview(&app);
+
+    let report = call(
+        &webview,
+        "duplicates",
+        serde_json::json!({ "scanId": scan_id, "minBytes": 1024u64, "budgetMs": 30_000u64 }),
+    )
+    .expect("duplicates");
+
+    let groups = report["groups"].as_array().expect("groups");
+    assert_eq!(
+        groups.len(),
+        1,
+        "one pair; the same-size file with different bytes must not join it: {report}"
+    );
+
+    let group = &groups[0];
+    assert_eq!(
+        group["members"].as_array().expect("members").len(),
+        2,
+        "both copies are in the group"
+    );
+
+    // The caveat is the engine's own sentence, carried per group. The panel shows these
+    // exact words, so the command must not paraphrase or drop them.
+    assert_eq!(
+        group["caveat"].as_str(),
+        Some(diskguardian_core::CONTENT_IDENTICAL_CAVEAT)
+    );
+
+    // With no clones in play, "would be freed" is one member's allocation.
+    assert_eq!(group["wasted_bytes"], group["bytes_each"]);
+    assert_eq!(report["partial"], serde_json::Value::Bool(false));
+}
+
+#[test]
+fn duplicates_with_nothing_above_the_floor_is_an_empty_result_not_an_error() {
+    let (app, scan_id) = seed_duplicates();
+    let webview = webview(&app);
+
+    // 1 GiB floor: the pair exists but is far below it, so nothing is even opened.
+    let report = call(
+        &webview,
+        "duplicates",
+        serde_json::json!({ "scanId": scan_id, "minBytes": 1_073_741_824u64 }),
+    )
+    .expect("duplicates");
+
+    assert_eq!(report["groups"].as_array().expect("groups").len(), 0);
+    assert_eq!(report["files_hashed"], serde_json::Value::from(0));
+    assert_eq!(report["partial"], serde_json::Value::Bool(false));
+}
+
+#[test]
+fn a_spent_budget_reports_partial_rather_than_no_duplicates() {
+    let (app, scan_id) = seed_duplicates();
+    let webview = webview(&app);
+
+    // Zero budget: the pass is over before it reads its first candidate. The honest
+    // answer is "we did not finish", never "there are none".
+    let report = call(
+        &webview,
+        "duplicates",
+        serde_json::json!({ "scanId": scan_id, "minBytes": 1024u64, "budgetMs": 0u64 }),
+    )
+    .expect("duplicates");
+
+    assert_eq!(report["partial"], serde_json::Value::Bool(true));
+    assert_eq!(report["groups"].as_array().expect("groups").len(), 0);
+}
+
+#[test]
+fn duplicates_of_an_unknown_scan_is_a_typed_error() {
+    let app = build();
+    let webview = webview(&app);
+
+    let result = call(
+        &webview,
+        "duplicates",
+        serde_json::json!({ "scanId": "nope", "minBytes": 1024u64 }),
+    );
+
+    assert!(result.is_err(), "must reject an unknown scan");
+    assert!(
+        result.unwrap_err().to_string().contains("unknown scan"),
+        "the error must name the failure"
+    );
+}
+
+/// Hard links are one inode with several names: deleting one name frees nothing, so no
+/// name of a shared inode may ever be proposed. Unix-only because inode identity comes
+/// from `(dev, ino)`, which the engine cannot read on Windows — see ISA C3.
+///
+/// The shared inode is given the same allocation as a genuine duplicate pair, because a
+/// hard link that is alone in its size bucket is settled for free and never reaches the
+/// `nlink` check. This fixture makes both stages speak: the pair must be found, the
+/// linked name must be refused.
+#[cfg(unix)]
+#[test]
+fn duplicates_never_proposes_one_name_of_a_shared_inode() {
+    let app = build();
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(dir.path().join("a")).expect("mkdir a");
+    fs::create_dir_all(dir.path().join("b")).expect("mkdir b");
+
+    fs::write(dir.path().join("original.bin"), vec![3u8; 256 * 1024]).expect("write");
+    fs::hard_link(
+        dir.path().join("original.bin"),
+        dir.path().join("second name.bin"),
+    )
+    .expect("hard link");
+
+    let payload = vec![0xA5u8; 256 * 1024];
+    fs::write(dir.path().join("a/report.pdf"), &payload).expect("write a");
+    fs::write(dir.path().join("b/report copy.pdf"), &payload).expect("write b");
+
+    let tree = diskguardian_core::scan(dir.path(), &Default::default()).expect("scan");
+    std::mem::forget(dir);
+    let scan_id = app.state::<AppState>().insert(tree);
+
+    let webview = webview(&app);
+    let report = call(
+        &webview,
+        "duplicates",
+        serde_json::json!({ "scanId": scan_id, "minBytes": 1024u64, "budgetMs": 30_000u64 }),
+    )
+    .expect("duplicates");
+
+    let groups = report["groups"].as_array().expect("groups");
+    assert_eq!(
+        groups.len(),
+        1,
+        "the genuine pair is found and the shared inode is not: {report}"
+    );
+    let members = groups[0]["members"].as_array().expect("members");
+    assert_eq!(members.len(), 2);
+    for member in members {
+        let path = member["path"].as_str().unwrap_or_default();
+        assert!(
+            !path.contains("original.bin"),
+            "a name of a shared inode must never be proposed: {path}"
+        );
+    }
+    // The name that carries the bytes is refused at candidate time, and counted so the
+    // exclusion is visible rather than silent.
+    assert_eq!(
+        report["excluded_links"].as_u64(),
+        Some(1),
+        "exactly the linked name is excluded: {report}"
+    );
+}

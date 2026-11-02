@@ -658,6 +658,102 @@ body.dragging #sunburst {
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* ── duplicates panel ────────────────────────────────────────────────────────── */
+
+#duplicates {
+  position: fixed;
+  inset: var(--topbar-h) 0 var(--collector-h) 0;
+  z-index: 26;
+  background: #131315;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+}
+
+.duplicates-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  max-width: 900px;
+}
+
+.duplicates-headline {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.duplicates-note {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.duplicate-group {
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.duplicate-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.duplicate-head span {
+  margin-left: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.duplicate-members {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.duplicate-member {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 8px;
+}
+
+.duplicate-member:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.duplicate-member.keep {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.duplicate-keep {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border: 1px solid var(--separator);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* The caveat is a statement the user must read, not a footnote: full size, own ground. */
+.duplicate-caveat {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid rgba(255, 159, 10, 0.7);
+  border-radius: 0 6px 6px 0;
+  background: rgba(255, 159, 10, 0.08);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .collector-action {
   appearance: none;
   margin-left: auto;

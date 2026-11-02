@@ -316,6 +316,38 @@ pub fn cleanup(
     })
 }
 
+/// How long a duplicates pass may run before it reports what it has. A click on a big
+/// tree must come back with an answer and a "not finished" flag, not spin.
+const DUPLICATE_BUDGET_MS: u64 = 8_000;
+
+/// Content-identical files in a finished scan.
+///
+/// Read-only: this proposes, the collector disposes. Nothing here deletes, and the report
+/// carries the engine's own caveat so a group of APFS clones can never be shown as
+/// guaranteed free space.
+///
+/// `async` matters: a whole-file hash over a large group is seconds of I/O, and a sync
+/// command runs on the UI thread. The scan mutex is held for the pass, so other
+/// scan-scoped commands wait for it — the window itself keeps painting.
+#[tauri::command(async)]
+pub fn duplicates(
+    state: State<'_, AppState>,
+    scan_id: String,
+    min_bytes: u64,
+    budget_ms: Option<u64>,
+) -> Result<diskguardian_core::DuplicateReport, String> {
+    let scans = lock_scans(&state)?;
+    let scan = scans.get(&scan_id).ok_or("unknown scan")?;
+
+    let mut options = diskguardian_core::DuplicateOptions::new(min_bytes);
+    options.deadline = Some(
+        std::time::Instant::now()
+            + std::time::Duration::from_millis(budget_ms.unwrap_or(DUPLICATE_BUDGET_MS)),
+    );
+
+    diskguardian_core::find_duplicates(&scan.tree, &options).map_err(|e| e.to_string())
+}
+
 #[derive(Debug, Serialize)]
 pub struct TrashStats {
     /// Where this platform keeps the trash, empty when it has no path-based one.
