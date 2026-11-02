@@ -53,6 +53,80 @@ pub fn build_view(tree: &Tree, root: NodeId, opts: &ViewOptions) -> Vec<ViewNode
     out
 }
 
+// ─── volume projection (C29) ──────────────────────────────────────────────────────────
+//
+// Hidden space is computed here, at view time, never stored in the tree. The tree's
+// invariant is `total = own + Σ children` over *measured* nodes (C5); the residual is a
+// figure that must move when the tree moves (delete, graft, revalidate), so computing it
+// from the current tree at every projection makes it self-correcting by construction and
+// keeps `Tree` free of a virtual node that deletion, duplicates and classification would
+// all have to special-case.
+
+/// The volume's own used space, OS-measured, taken fresh at every projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VolumeAnchor {
+    pub used_bytes: u64,
+}
+
+/// What [`build_volume_view`] produced beyond the drawable nodes.
+#[derive(Debug, Clone)]
+pub struct VolumeView {
+    pub nodes: Vec<ViewNode>,
+    /// `anchor.used_bytes − tree.total_bytes()`, signed and unclamped. Negative means
+    /// the tree accounts for more than the volume reports used — a state ("the disk
+    /// changed during or after the scan"), for words, not a petal.
+    pub residual_bytes: i64,
+}
+
+/// The one synthetic node a volume scan adds, drawn after pruning so nothing can merge
+/// it away. `kind: "hidden"`, `node_id: None` — the "smaller objects" petal's sibling.
+pub const HIDDEN_SPACE_NAME: &str = "Hidden space";
+
+/// As [`build_view`], for the scan root of a volume scan: the root reports the anchor's
+/// used bytes (so the header and the ring sum to the volume), and a positive residual
+/// draws one synthetic hidden-space child. Callers pass the scan root — the anchor is a
+/// volume-level figure and means nothing against a subtree.
+///
+/// The residual is signed and unclamped in the return. A negative one (the tree totals
+/// more than the volume reports used) draws nothing — a zero-width petal would be a
+/// lie about the disk — and is the caller's words instead.
+#[must_use]
+pub fn build_volume_view(
+    tree: &Tree,
+    root: NodeId,
+    opts: &ViewOptions,
+    anchor: &VolumeAnchor,
+) -> VolumeView {
+    let mut nodes = build_view(tree, root, opts);
+    // `build_view`'s root children already sum to the subtree's measured total, petal
+    // or no petal, so the residual is the one number that makes the ring add up to the
+    // volume. i128 because the two endpoints are independent u64 measurements.
+    let residual = anchor.used_bytes as i128 - tree.nodes[root].total_bytes as i128;
+    let residual_bytes = residual.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+
+    nodes[0].bytes = anchor.used_bytes;
+    if residual > 0 {
+        let index = nodes.len() as u32;
+        nodes.push(ViewNode {
+            index,
+            node_id: None,
+            name: HIDDEN_SPACE_NAME.to_string(),
+            bytes: u64::try_from(residual).unwrap_or(u64::MAX),
+            kind: "hidden",
+            children: Vec::new(),
+            aggregated_count: 0,
+            partial: false,
+            missing: false,
+        });
+        nodes[0].children.push(index);
+    }
+
+    VolumeView {
+        nodes,
+        residual_bytes,
+    }
+}
+
 /// A deleted node is worth nothing, which would make it invisible. Give it a sliver wide
 /// enough to see and strike through, so the user can tell what they just did.
 const MISSING_FLOOR_DIVISOR: u64 = 200;

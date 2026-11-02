@@ -20,7 +20,7 @@
 //! There is no privileged process between app runs.
 
 use crate::state::AppState;
-use diskguardian_core::{build_view, NodeId, ViewNode, ViewOptions};
+use diskguardian_core::{NodeId, ViewNode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, Read};
@@ -57,6 +57,9 @@ pub struct AdminScanReport {
     pub files: u64,
     /// A fresh projection of the whole tree, the same shape every other command returns.
     pub view: Vec<ViewNode>,
+    /// Volume-level figures when the subject is a volume scan: a graft grows the tree,
+    /// so the hidden residual shrinks in the same projection.
+    pub volume: Option<crate::commands::VolumeSummary>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -427,13 +430,15 @@ pub async fn scan_restricted<R: tauri::Runtime>(
     let report = {
         let scans = lock_scans(&state)?;
         let scan = scans.get(&scan_id).ok_or("unknown scan")?;
+        let (view, volume) = crate::commands::project(&state, scan, None)?;
         AdminScanReport {
             scan_id: scan_id.clone(),
             patched,
             still_restricted: scan.tree.restricted_roots().len() as u32,
             bytes: scan.tree.total_bytes(),
             files: scan.tree.file_count(),
-            view: build_view(&scan.tree, scan.tree.root, &ViewOptions::default()),
+            view,
+            volume,
         }
     };
     Ok(report)

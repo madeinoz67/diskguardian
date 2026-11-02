@@ -7,8 +7,8 @@
 use crate::platform;
 use crate::state::AppState;
 use diskguardian_core::{
-    build_view, delete, scan_with_progress, BranchDone, DeleteMode, ProgressFn, ViewNode,
-    ViewOptions,
+    build_view, build_volume_view, delete, scan_with_progress, BranchDone, DeleteMode, ProgressFn,
+    ViewNode, ViewOptions, VolumeAnchor,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -24,6 +24,16 @@ pub struct VolumeInfo {
     pub free_bytes: u64,
 }
 
+/// Volume-level figures for a volume scan (C29), carried on every view-returning
+/// response so the header renders without a panel call. `hidden_bytes` is
+/// `used − tree`, signed: negative is a state ("the disk changed during or after the
+/// scan") for words, not a petal.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct VolumeSummary {
+    pub used_bytes: u64,
+    pub hidden_bytes: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ScanResponse {
     pub scan_id: String,
@@ -35,6 +45,8 @@ pub struct ScanResponse {
     pub errors: u64,
     pub partial: bool,
     pub view: Vec<ViewNode>,
+    /// Present iff the scan root was a mount point.
+    pub volume: Option<VolumeSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -59,6 +71,7 @@ pub struct DeleteReport {
     pub view: Vec<ViewNode>,
     pub bytes: u64,
     pub files: u64,
+    pub volume: Option<VolumeSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -153,6 +166,54 @@ pub struct ScanProgress {
     pub files: u64,
 }
 
+/// The words that ride any negative residual, so the panel can never show one as a
+/// silent zero.
+pub const NEGATIVE_RESIDUAL_NOTE: &str =
+    "The volume changed more than the scan window — the disk moved during or after this \
+     scan. Rescan for exact figures.";
+
+/// Purgeable, worded as what it is: an upper bound beside the breakdown, never a
+/// component of the hidden figure (the system may free space the tree already counts).
+pub const PURGEABLE_NOTE: &str =
+    "up to this much: snapshots, caches and offloaded content macOS may free on its \
+     own. Not part of the hidden figure — much of it is space the scan already counts. \
+     Measured as the difference between two capacity figures the OS reports";
+
+/// Project a view of `scan` at `node_id` (None: the scan root). For a volume scan's
+/// root view the anchor is re-measured now (one statfs) and the hidden petal is drawn
+/// from the *current* tree, so deletes, grafts and revalidates move it for free. An
+/// anchor that cannot be measured yields the plain view and no summary — never a
+/// hidden node anchored at zero.
+pub(crate) fn project(
+    state: &AppState,
+    scan: &crate::state::Scan,
+    node_id: Option<u64>,
+) -> Result<(Vec<ViewNode>, Option<VolumeSummary>), String> {
+    let root = node_id.map_or(scan.tree.root, |id| id as usize);
+    if root >= scan.tree.nodes.len() {
+        return Err("node is not part of this scan".to_string());
+    }
+    match &scan.volume {
+        // The anchor is a volume-level figure: only the scan root's own projection
+        // carries the petal. Deeper views are ordinary tree views.
+        Some(ctx) if root == scan.tree.root => {
+            let Some(used) = crate::volume::probed_volume_used(state, &ctx.mount) else {
+                return Ok((build_view(&scan.tree, root, &ViewOptions::default()), None));
+            };
+            let anchor = VolumeAnchor { used_bytes: used };
+            let view = build_volume_view(&scan.tree, root, &ViewOptions::default(), &anchor);
+            Ok((
+                view.nodes,
+                Some(VolumeSummary {
+                    used_bytes: used,
+                    hidden_bytes: view.residual_bytes,
+                }),
+            ))
+        }
+        _ => Ok((build_view(&scan.tree, root, &ViewOptions::default()), None)),
+    }
+}
+
 #[tauri::command]
 pub async fn scan<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -165,6 +226,13 @@ pub async fn scan<R: tauri::Runtime>(
         return Err(format!("{path} does not exist"));
     }
     let nonce = nonce.unwrap_or_default();
+
+    // A volume scan is a scan whose root is a mount point. It is bounded by device (the
+    // APFS boot group presents as one) and, on macOS, by the two fixed prefixes that
+    // share the boot group's device id — without which the walk would enter the Data
+    // volume twice through the merged namespace and count directory metadata twice.
+    // A folder scan changes nothing: no anchor, no boundary, no hidden node.
+    let is_volume_scan = crate::volume::is_mount_point(&root);
 
     // The walk in flight watches this flag, and `cancel_scan` is what sets it. Registering a
     // new scan *replaces* the slot rather than signalling the old walk — so a walk is stopped
@@ -197,12 +265,21 @@ pub async fn scan<R: tauri::Runtime>(
         );
     });
 
+    let boundary_prefixes = if is_volume_scan {
+        crate::volume::volume_scan_exclusions()
+    } else {
+        Vec::new()
+    };
+    let walk_root = root.clone();
+    let bounded = is_volume_scan;
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         let options = diskguardian_core::ScanOptions {
             cancel: Some(cancel),
+            same_device_only: bounded,
+            exclude_prefixes: boundary_prefixes,
             ..Default::default()
         };
-        scan_with_progress(&root, &options, Some(progress))
+        scan_with_progress(&walk_root, &options, Some(progress))
     })
     .await
     .map_err(|e| format!("scan task failed: {e}"))?;
@@ -221,14 +298,46 @@ pub async fn scan<R: tauri::Runtime>(
 
     let scanned = outcome.map_err(|e| e.to_string())?;
 
+    // The decomposition is measured once, at scan completion, and cached on the scan:
+    // `diskutil` per navigation would be a subprocess per click. The anchor, by
+    // contrast, is re-measured at every projection (§ `project`).
+    let volume_ctx = if is_volume_scan {
+        Some(measure_volume_context(&state, &root).await?)
+    } else {
+        None
+    };
+
     let name = scanned.nodes[scanned.root].name.clone();
     let bytes = scanned.total_bytes();
     let files = scanned.file_count();
     let duration_ms = scanned.duration_ms;
     let errors = scanned.errors;
     let partial = scanned.nodes[scanned.root].partial;
-    let view = build_view(&scanned, scanned.root, &ViewOptions::default());
-    let scan_id = state.insert(scanned);
+    let (view, volume) = match &volume_ctx {
+        Some(ctx) => match crate::volume::probed_volume_used(&state, &ctx.mount) {
+            Some(used) => {
+                let anchor = VolumeAnchor { used_bytes: used };
+                let projected =
+                    build_volume_view(&scanned, scanned.root, &ViewOptions::default(), &anchor);
+                (
+                    projected.nodes,
+                    Some(VolumeSummary {
+                        used_bytes: used,
+                        hidden_bytes: projected.residual_bytes,
+                    }),
+                )
+            }
+            None => (
+                build_view(&scanned, scanned.root, &ViewOptions::default()),
+                None,
+            ),
+        },
+        None => (
+            build_view(&scanned, scanned.root, &ViewOptions::default()),
+            None,
+        ),
+    };
+    let scan_id = state.insert_with(scanned, volume_ctx);
 
     Ok(ScanResponse {
         scan_id,
@@ -240,6 +349,90 @@ pub async fn scan<R: tauri::Runtime>(
         errors,
         partial,
         view,
+        volume,
+    })
+}
+
+/// The slow-moving half of hidden space, measured once per volume scan: the container
+/// decomposition (`diskutil`, spawn_blocking so the UI never waits on a subprocess on
+/// the main thread), the purgeable annotation, and the snapshot count — counted, never
+/// sized (C27). A probe seam injected by the tests stands in for each OS call.
+async fn measure_volume_context(
+    state: &AppState,
+    mount: &Path,
+) -> Result<crate::state::VolumeScan, String> {
+    let seam = state
+        .volume_probes
+        .lock()
+        .map_err(|_| "volume probe seam is poisoned".to_string())?
+        .clone();
+
+    let container_mount = mount.to_path_buf();
+    let decomposition = match &seam {
+        Some(probes) => (probes.container)(&container_mount),
+        None => tauri::async_runtime::spawn_blocking(move || {
+            crate::volume::container_report(&container_mount)
+        })
+        .await
+        .map_err(|e| format!("the container probe failed to run: {e}"))?,
+    };
+
+    let purgeable = match &seam {
+        Some(probes) => (probes.purgeable)(mount),
+        None => crate::volume::purgeable_bytes(mount),
+    };
+
+    // Snapshots are a boot-volume fact: a scan of another volume has no local
+    // snapshots to speak of, and saying so is better than pasting the boot count
+    // beside the wrong disk.
+    let (snapshot_count, snapshot_note) = if mount == Path::new(crate::snapshots::BOOT_VOLUME) {
+        let listing = crate::snapshots::list_snapshots();
+        if !listing.supported {
+            (
+                0,
+                "Local Time Machine snapshots exist only on macOS".to_string(),
+            )
+        } else if listing.error.is_some() {
+            (
+                0,
+                "the snapshot list could not be read; any they hold is part of the \
+                 still-hidden figure"
+                    .to_string(),
+            )
+        } else if listing.snapshots.is_empty() {
+            (
+                0,
+                "Time Machine is holding no local snapshots right now".to_string(),
+            )
+        } else {
+            (
+                listing.snapshots.len() as u64,
+                "macOS does not report how much each holds; any they hold is part of \
+                 the still-hidden figure"
+                    .to_string(),
+            )
+        }
+    } else {
+        (
+            0,
+            "Local Time Machine snapshots are reported for the startup volume \
+             only"
+                .to_string(),
+        )
+    };
+
+    let measured_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    Ok(crate::state::VolumeScan {
+        mount: mount.to_path_buf(),
+        decomposition,
+        purgeable,
+        snapshot_count,
+        snapshot_note,
+        measured_at,
     })
 }
 
@@ -265,11 +458,7 @@ pub fn view(
 ) -> Result<Vec<ViewNode>, String> {
     let scans = lock_scans(&state)?;
     let scan = scans.get(&scan_id).ok_or("unknown scan")?;
-    let root = node_id.map_or(scan.tree.root, |id| id as usize);
-    if root >= scan.tree.nodes.len() {
-        return Err("node is not part of this scan".to_string());
-    }
-    Ok(build_view(&scan.tree, root, &ViewOptions::default()))
+    Ok(project(&state, scan, node_id)?.0)
 }
 
 #[derive(Debug, Serialize)]
@@ -589,6 +778,7 @@ pub struct FreshnessReport {
     pub bytes: u64,
     pub files: u64,
     pub view: Vec<ViewNode>,
+    pub volume: Option<VolumeSummary>,
 }
 
 /// Drop view nodes whose paths have disappeared since the scan.
@@ -623,11 +813,13 @@ pub fn revalidate(
         scan.tree.mark_missing(&gone);
     }
 
+    let (view, volume) = project(&state, scan, node_id)?;
     Ok(FreshnessReport {
         removed,
         bytes: scan.tree.total_bytes(),
         files: scan.tree.file_count(),
-        view: build_view(&scan.tree, root, &ViewOptions::default()),
+        view,
+        volume,
     })
 }
 
@@ -733,12 +925,8 @@ pub fn delete_collected(
     scan.tree.mark_missing(&deleted);
     scan.collector.clear();
 
-    let view_root = node_id.map_or(scan.tree.root, |id| id as usize);
-    let view = if view_root < scan.tree.nodes.len() {
-        build_view(&scan.tree, view_root, &ViewOptions::default())
-    } else {
-        build_view(&scan.tree, scan.tree.root, &ViewOptions::default())
-    };
+    let view_root = node_id.filter(|&id| (id as usize) < scan.tree.nodes.len());
+    let (view, volume) = project(&state, scan, view_root)?;
 
     Ok(DeleteReport {
         freed,
@@ -762,6 +950,138 @@ pub fn delete_collected(
         bytes: scan.tree.total_bytes(),
         files: scan.tree.file_count(),
         view,
+        volume,
+    })
+}
+
+// ─── hidden space (C29) ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct OtherVolumeView {
+    pub name: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RestrictedRootView {
+    pub path: String,
+    pub note: Option<String>,
+}
+
+/// The hidden-space breakdown of one volume scan. Absent optionals are honest
+/// absences: `other_volumes: None` is "not decomposed on this volume", never "none";
+/// `purgeable_bytes: None` is unmeasured, never zero; `negative_note` rides any
+/// negative residual so it can never be drawn as a silent zero.
+#[derive(Debug, Serialize)]
+pub struct HiddenSpaceReport {
+    pub mount: String,
+    /// The volume's used space, measured now: the anchor.
+    pub used_bytes: u64,
+    pub tree_bytes: u64,
+    /// `used − tree`, signed and unclamped.
+    pub hidden_bytes: i64,
+    pub other_volumes: Option<Vec<OtherVolumeView>>,
+    pub snapshot_count: u64,
+    pub snapshot_note: String,
+    pub restricted_roots: Vec<RestrictedRootView>,
+    pub purgeable_bytes: Option<u64>,
+    pub purgeable_note: Option<String>,
+    /// `hidden − Σ other_volumes`, signed; `None` when there is no decomposition. A
+    /// negative value is the boundary-leak signal and is surfaced, not clamped.
+    pub still_hidden_bytes: Option<i64>,
+    /// The mounts the volume boundary did not enter, listed rather than silently
+    /// skipped.
+    pub skipped_mounts: Vec<String>,
+    /// Unix seconds of the decomposition measurement ("measured at scan time").
+    pub measured_at: u64,
+    pub negative_note: Option<String>,
+}
+
+/// The breakdown behind the hidden petal. The anchor is measured now; everything slow
+/// (other volumes, purgeable, snapshots) is the once-per-scan measurement the scan
+/// carries. The webview supplies a scan id and nothing else.
+#[tauri::command]
+pub fn hidden_space(
+    state: State<'_, AppState>,
+    scan_id: String,
+) -> Result<HiddenSpaceReport, String> {
+    let scans = lock_scans(&state)?;
+    let scan = scans.get(&scan_id).ok_or("unknown scan")?;
+    let ctx = scan.volume.as_ref().ok_or(
+        "this scan is not a volume scan: hidden space applies to a scanned disk, not a folder",
+    )?;
+
+    let used = crate::volume::probed_volume_used(&state, &ctx.mount).ok_or(
+        "the volume's used space could not be measured right now — the mount may have \
+         gone; rescan"
+            .to_string(),
+    )?;
+    let tree_bytes = scan.tree.total_bytes();
+    let hidden =
+        (used as i128 - tree_bytes as i128).clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+
+    // The decomposition was parsed at scan time; the split into other volumes happens
+    // here, against the stored mount, so a Data-rooted rescan needs no re-measure. With
+    // no positive residual there is no hidden figure to decompose — the words carry the
+    // state instead.
+    let (other_volumes, still_hidden_bytes) = if hidden > 0 {
+        match &ctx.decomposition {
+            Some(report) => {
+                match crate::volume::decompose_other_volumes(
+                    std::slice::from_ref(report),
+                    &ctx.mount,
+                ) {
+                    Some((_, others)) => {
+                        let views: Vec<OtherVolumeView> = others
+                            .iter()
+                            .map(|v| OtherVolumeView {
+                                name: v.name.clone(),
+                                bytes: v.used_bytes,
+                            })
+                            .collect();
+                        let sum: u128 = others.iter().map(|v| v.used_bytes as u128).sum();
+                        let still = (hidden as i128 - sum as i128)
+                            .clamp(i64::MIN as i128, i64::MAX as i128);
+                        (Some(views), Some(still as i64))
+                    }
+                    // A stored decomposition that no longer maps says nothing rather
+                    // than zeros.
+                    None => (None, None),
+                }
+            }
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
+    let restricted_roots: Vec<RestrictedRootView> = scan
+        .tree
+        .restricted_roots()
+        .into_iter()
+        .map(|id| RestrictedRootView {
+            path: scan.tree.path_of(id).display().to_string(),
+            note: scan.tree.node(id).note.clone(),
+        })
+        .collect();
+
+    let purgeable = ctx.purgeable;
+
+    Ok(HiddenSpaceReport {
+        mount: ctx.mount.display().to_string(),
+        used_bytes: used,
+        tree_bytes,
+        hidden_bytes: hidden,
+        other_volumes,
+        snapshot_count: ctx.snapshot_count,
+        snapshot_note: ctx.snapshot_note.clone(),
+        restricted_roots,
+        purgeable_bytes: purgeable,
+        purgeable_note: purgeable.map(|_| PURGEABLE_NOTE.to_string()),
+        still_hidden_bytes,
+        skipped_mounts: scan.tree.skipped_mounts.clone(),
+        measured_at: ctx.measured_at,
+        negative_note: (hidden < 0).then(|| NEGATIVE_RESIDUAL_NOTE.to_string()),
     })
 }
 

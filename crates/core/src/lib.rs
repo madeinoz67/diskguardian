@@ -31,4 +31,7 @@ pub use scan::{
     scan, scan_with_progress, BranchDone, ProgressFn, ScanError, ScanOptions, CANCELLED_NOTE,
     DEADLINE_NOTE,
 };
-pub use view::{build_view, ViewNode, ViewOptions};
+pub use view::{
+    build_view, build_volume_view, ViewNode, ViewOptions, VolumeAnchor, VolumeView,
+    HIDDEN_SPACE_NAME,
+};

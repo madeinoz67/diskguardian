@@ -4,6 +4,7 @@ pub mod favourites;
 mod platform;
 pub mod snapshots;
 pub mod state;
+pub mod volume;
 
 use state::AppState;
 
@@ -34,9 +35,11 @@ pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             commands::delete_collected,
             commands::reveal,
             commands::quicklook,
+            commands::hidden_space,
             admin::scan_restricted,
             snapshots::local_snapshots,
             snapshots::purge_local_snapshots,
+            volume::open_fda_pane,
             favourites::favourites,
             favourites::favourite_marks,
             favourites::favourite_node,

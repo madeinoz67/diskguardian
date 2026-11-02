@@ -16,6 +16,7 @@ import type {
   FreshnessReport,
   CleanupReport,
   EmptyReport,
+  HiddenSpaceReport,
   PurgeReport,
   ScanResponse,
   SnapshotReport,
@@ -126,7 +127,7 @@ export async function emptyTrash(confirmed: boolean): Promise<EmptyReport> {
 
 /** Drop view nodes whose paths have vanished since the scan. */
 export async function revalidate(scanId: string, nodeId: number | null): Promise<FreshnessReport> {
-  if (!isTauri) return { removed: 0, bytes: 0, files: 0, view: [] }
+  if (!isTauri) return { removed: 0, bytes: 0, files: 0, view: [], volume: null }
   return invoke<FreshnessReport>('revalidate', { scanId, nodeId })
 }
 
@@ -166,6 +167,7 @@ export async function deleteCollected(
       view: reroot(demoNodes, 0),
       bytes: demoNodes[0]?.bytes ?? 0,
       files: 0,
+      volume: null,
     }
   }
   return invoke<DeleteReport>('delete_collected', { scanId, nodeId, permanent, confirmed })
@@ -201,6 +203,7 @@ export async function scanRestricted(scanId: string): Promise<AdminScanReport> {
       bytes: demoNodes[0]?.bytes ?? 0,
       files: 0,
       view: demoView(0),
+      volume: null,
     }
   }
   return invoke<AdminScanReport>('scan_restricted', { scanId })
@@ -211,6 +214,26 @@ export async function onAdminProgress(handler: (p: AdminProgress) => void): Prom
   if (!isTauri) return () => {}
   const unlisten = await listen<AdminProgress>('admin-progress', (event) => handler(event.payload))
   return unlisten
+}
+
+// ─── hidden space (C29) ──────────────────────────────────────────────────────────────
+
+/**
+ * The hidden-space breakdown of the current volume scan. The command takes a scan id
+ * and nothing else: the webview cannot name a path.
+ */
+export async function hiddenSpace(scanId: string): Promise<HiddenSpaceReport> {
+  if (!isTauri) return demoHidden()
+  return invoke<HiddenSpaceReport>('hidden_space', { scanId })
+}
+
+/**
+ * Open the Full Disk Access pane. The URL is fixed on the Rust side — this command has
+ * no arguments, so it can never be aimed anywhere else.
+ */
+export async function openFdaPane(): Promise<void> {
+  if (!isTauri) return
+  await invoke('open_fda_pane')
 }
 
 // ─── favourites ──────────────────────────────────────────────────────────────────────
@@ -404,6 +427,8 @@ function demoScan(path: string, nonce: string): ScanResponse {
     errors: 2,
     partial: true,
     view: reroot(demoNodes, 0),
+    // The demo scans a synthetic folder, not a volume: no anchor, honestly.
+    volume: null,
   }
 }
 
@@ -508,6 +533,36 @@ function demoPurge(): PurgeReport {
       'This is the browser demo: there is no tmutil here, so no snapshots were deleted. Run the app for the real answer.',
     freed_bytes: 0,
     remaining: DEMO_SNAPSHOTS.map((snapshot) => ({ ...snapshot })),
+  }
+}
+
+/**
+ * The browser demo's hidden-space report: the same shape and the same honest wording,
+ * with synthetic figures. It claims no purge and invents no snapshot size — the demo
+ * tree's numbers are not a volume's.
+ */
+function demoHidden(): HiddenSpaceReport {
+  return {
+    mount: '/',
+    used_bytes: 994_662_584_320,
+    tree_bytes: 830_000_000_000,
+    hidden_bytes: 164_662_584_320,
+    other_volumes: [
+      { name: 'Preboot', bytes: 9_041_682_432 },
+      { name: 'Recovery', bytes: 1_307_287_552 },
+      { name: 'VM', bytes: 4_295_032_832 },
+    ],
+    snapshot_count: DEMO_SNAPSHOTS.length,
+    snapshot_note:
+      'macOS does not report how much each holds; any they hold is part of the still-hidden figure',
+    restricted_roots: [{ path: '/Users/you/Private', note: 'permission denied' }],
+    purgeable_bytes: 164_000_000_000,
+    purgeable_note:
+      'up to this much: snapshots, caches and offloaded content macOS may free on its own',
+    still_hidden_bytes: 150_018_681_504,
+    skipped_mounts: ['/Volumes/com.apple.TimeMachine.localsnapshots'],
+    measured_at: Math.floor(Date.now() / 1000),
+    negative_note: null,
   }
 }
 

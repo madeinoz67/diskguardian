@@ -113,6 +113,46 @@ What that pass is, plainly:
   is granted Full Disk Access. Whatever could not be measured is reported with a count,
   never silently dropped.
 
+## Hidden space
+
+A scan of a **volume** (its root is a mount point — the startup disk, an external disk)
+does not stop at the flower. The volume's own used space is measured, and the gap
+between that figure and everything the scan could see is drawn as one **Hidden space**
+petal. Click it and the panel breaks the gap down into what the OS can name:
+
+- **Other volumes of this container.** An APFS container holds several volumes
+  (Preboot, Recovery, VM, Update…) that are not your files; each is measured by the OS
+  and listed. Volumes of *other* containers never leak into the number.
+- **Local snapshots.** Counted, never sized: macOS reports which snapshots exist, not
+  what each holds, so the panel shows timestamps and says so. Anything they hold is part
+  of the still-hidden figure.
+- **Protected areas.** The scan's restricted roots, named, with their reason. While any
+  remain, the panel offers the Full Disk Access pane — some are protected by macOS
+  privacy settings, not by file permissions, and only that grant reads them.
+- **Still hidden.** The remainder: container overhead, snapshot-held blocks, indexing
+  roots, and whatever else the walk cannot name. It is *named*, never distributed
+  pretendingly across the other rows.
+
+Three things the panel refuses to do:
+
+- **No per-snapshot size, by any means.** macOS does not report one; any figure would be
+  invented.
+- **Purgeable space is an annotation, not a slice.** macOS also reports how much it
+  *may* free on its own (snapshots, caches, offloaded content). That pool overlaps
+  space the scan already counts, so it is shown beside the breakdown as "up to N" —
+  never as part of the hidden figure, and nothing in this app offers to purge it. The
+  only purges are the ones you ask for yourself: your snapshots (as you, not elevated)
+  and your Trash.
+- **No silent zero.** If the scan's tree ever totals *more* than the volume reports
+  used — the disk changed during or after the scan — the petal is omitted and the panel
+  says so in words. A failed breakdown is "not available", never "0 other volumes".
+
+A volume scan also stays on its own disk: it walks only the scanned volume's device
+(the startup volume's System and Data volumes count as one, because macOS presents them
+as one), never enters other disks or transient snapshot mounts, and lists the mounts it
+excluded. Windows and Linux get the anchor and the petal; the decomposition into other
+volumes and purgeable is macOS-only for now.
+
 ## Favourite folders
 
 Any folder you keep coming back to can be starred, and the favourites then sit at the

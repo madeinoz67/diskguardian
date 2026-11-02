@@ -77,6 +77,15 @@ pub struct Tree {
     pub scanned_root: PathBuf,
     pub duration_ms: u64,
     pub errors: u64,
+    /// Mounts and prefixes the volume boundary stopped the walk from entering (C29):
+    /// another volume's content, not unmeasured space of this one. Reported, never
+    /// silently dropped — the hidden-space panel names them.
+    ///
+    /// `serde(default)` because `Tree` crosses the process boundary to and from the
+    /// administrator helper's job and results files, which predate the field: a missing
+    /// field must default to "nothing was skipped", not fail the graft.
+    #[serde(default)]
+    pub skipped_mounts: Vec<String>,
 }
 
 impl Tree {

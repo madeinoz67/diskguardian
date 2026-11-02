@@ -659,6 +659,9 @@ name = "diskguardian-app"
 version = "0.1.0"
 dependencies = [
  "diskguardian-core",
+ "libc",
+ "objc2-foundation",
+ "plist",
  "serde",
  "serde_json",
  "sysinfo",
