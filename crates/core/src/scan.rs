@@ -67,6 +67,10 @@ pub enum ScanError {
         #[source]
         source: std::io::Error,
     },
+    /// The caller asked for the walk to stop. Deliberately not a partial tree: see
+    /// [`ScanOptions::cancel`].
+    #[error("scan cancelled")]
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -79,11 +83,25 @@ pub struct ScanOptions {
     /// The caller cannot rely on killing the process (an elevated walker belongs to
     /// root), so the walker enforces its own budget, exactly like `max_entries`.
     pub deadline: Option<Instant>,
+    /// Set by the caller to abandon the walk — the user picked another directory. Unlike a
+    /// deadline, cancellation is not a partial answer: if the walk observes the request, it
+    /// returns [`ScanError::Cancelled`] and no tree at all, because a half-built tree shown as
+    /// a scan would be a claim about the disk that nobody measured.
+    ///
+    /// A request that arrives after the last poll yields a completed tree — `Ok` therefore
+    /// means "not truncated for cancellation", never "the request was received". Both
+    /// outcomes are honest; which one a given race produces is not stable across runs.
+    pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// The `note` a deadline-hit directory carries. Public so the caller that set the
 /// deadline can recognise its own budget in the result.
 pub const DEADLINE_NOTE: &str = "deadline reached";
+
+/// The `note` a directory carries when the walk was abandoned under it. Only ever seen inside
+/// a tree that is then discarded, but a note is cheaper than a silent empty directory if that
+/// ever stops being true.
+pub const CANCELLED_NOTE: &str = "scan cancelled";
 
 /// One finished child of the scan root, reported the moment it completes so a UI can
 /// draw it without waiting for the whole tree.
@@ -129,10 +147,19 @@ pub fn scan_with_progress(
         seen: Mutex::new(HashSet::new()),
         max_entries: opts.max_entries,
         deadline: opts.deadline,
+        cancel: opts.cancel.clone(),
+        cancelled: std::sync::atomic::AtomicBool::new(false),
         visited: AtomicU64::new(0),
         errors: AtomicU64::new(0),
         progress,
     };
+
+    // Checked before the walk as well as inside it, because a file root has no directory to
+    // poll: dropping a single file on the window with a request already standing used to
+    // return a completed scan. Both root shapes answer the same way.
+    if builder.cancel_requested() {
+        return Err(ScanError::Cancelled);
+    }
 
     let name = root_name(root);
     let scanned = if meta.is_dir() {
@@ -140,6 +167,14 @@ pub fn scan_with_progress(
     } else {
         builder.leaf(name, &meta)
     };
+
+    // An abandoned walk produces no tree. Returning what it had reached would be a partial
+    // measurement presented as a scan of the volume. The invariant that makes the remaining
+    // race benign: every cancellation-truncation site sets `cancelled`, so an `Ok` tree was
+    // not truncated for cancellation — it is as complete as an uncancelled walk.
+    if builder.cancelled.load(Ordering::Relaxed) {
+        return Err(ScanError::Cancelled);
+    }
 
     // One allocation for the arena: count first, then fill. Counting walks the
     // in-memory tree only, so it costs no syscalls.
@@ -219,6 +254,10 @@ struct Builder {
     seen: Mutex<HashSet<(u64, u64)>>,
     max_entries: Option<u64>,
     deadline: Option<Instant>,
+    cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Set once the walk has actually seen a cancellation request, so the caller can tell a
+    /// completed walk from an abandoned one without reading a flag it might have raced.
+    cancelled: std::sync::atomic::AtomicBool,
     visited: AtomicU64,
     errors: AtomicU64,
     progress: Option<ProgressFn>,
@@ -226,7 +265,13 @@ struct Builder {
 
 impl Builder {
     /// Report a completed branch, but only for the root's own children.
+    ///
+    /// Silent once the walk has been abandoned: a cancelled walk's branches are not news, and
+    /// on a shared progress channel they are indistinguishable from the next scan's.
     fn report(&self, scanned: &Scanned) {
+        if self.cancelled.load(Ordering::Relaxed) || self.cancel_requested() {
+            return;
+        }
         if let Some(progress) = &self.progress {
             progress(BranchDone {
                 name: scanned.name.clone(),
@@ -236,7 +281,22 @@ impl Builder {
         }
     }
 
+    /// Whether the caller has asked the walk to stop. Cheap enough to ask per directory:
+    /// one relaxed load, no syscall.
+    fn cancel_requested(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+    }
+
     fn walk_dir(&self, path: &Path, name: String, depth: usize) -> Scanned {
+        // Cancellation unwinds from here rather than measuring anything: every level still
+        // in flight returns immediately, so the whole walk stops in one pass down the tree.
+        if self.cancel_requested() {
+            self.cancelled.store(true, Ordering::Relaxed);
+            return restricted(name, path, CANCELLED_NOTE.to_string());
+        }
+
         // The budget is checked before the directory is opened, so a spent deadline
         // costs no syscalls and produces the same Restricted shape as a refusal.
         if self
@@ -267,6 +327,16 @@ impl Builder {
         let mut entries = read_dir;
         let mut interruptions = 0u32;
         loop {
+            // Also checked per entry: one huge flat directory would otherwise hold the walk
+            // to the end of its listing before the next directory boundary noticed.
+            if self.cancel_requested() {
+                self.cancelled.store(true, Ordering::Relaxed);
+                // The truncated listing is not a complete one. Today every cancelled walk
+                // ends in `Err` so this flag is unused, but a tree-on-cancel would be a
+                // C5/A3 violation without it, and the sibling truncations all set it.
+                partial = true;
+                break;
+            }
             let entry = match entries.next() {
                 None => break,
                 Some(Ok(entry)) => entry,
@@ -304,12 +374,19 @@ impl Builder {
         dirs.sort_by_cached_key(fs::DirEntry::file_name);
         files.sort_by_cached_key(fs::DirEntry::file_name);
 
-        // The callback fires inside the closure, so a branch is reported the instant it
-        // finishes rather than when `collect` finally returns.
-        let subtrees: Vec<Scanned> = dirs
-            .par_iter()
-            .map(|entry| self.walk_dir(&entry.path(), entry_name(entry), depth + 1))
-            .collect();
+        // Checked before the dispatch as well as inside it: spawning a task per queued
+        // directory after the user has abandoned the walk is work nobody asked for, and on a
+        // wide directory it is thousands of tasks.
+        let subtrees: Vec<Scanned> = if self.cancel_requested() {
+            self.cancelled.store(true, Ordering::Relaxed);
+            Vec::new()
+        } else {
+            // The callback fires inside the closure, so a branch is reported the instant it
+            // finishes rather than when `collect` finally returns.
+            dirs.par_iter()
+                .map(|entry| self.walk_dir(&entry.path(), entry_name(entry), depth + 1))
+                .collect()
+        };
 
         for sub in subtrees {
             if sub.partial {
@@ -319,6 +396,15 @@ impl Builder {
         }
 
         for entry in &files {
+            // The measurement loop is where a cancelled walk used to keep working: the
+            // listing could be abandoned and this loop would still stat every file already
+            // collected — measured at 3.9 µs per entry on warm APFS, so seconds on a wide
+            // directory and far longer on cold media.
+            if self.cancel_requested() {
+                self.cancelled.store(true, Ordering::Relaxed);
+                partial = true;
+                break;
+            }
             // `DirEntry::metadata` does not traverse symlinks, which is exactly what we
             // want: a link costs only its own metadata, never its target.
             let meta = match entry.metadata() {

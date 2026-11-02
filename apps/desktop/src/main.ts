@@ -169,14 +169,21 @@ function hideAdminMeasurement(): void {
 
 async function measureRestricted(): Promise<void> {
   if (!state.scanId) return
+  // A privileged pass can take minutes, and the user is free to pick another folder while it
+  // runs. Hold the subject of the measurement, not "whatever is current when it answers".
+  const subject = state.scanId
   adminAction.disabled = true
   setStatus('Measuring restricted areas… the system will ask for your administrator password')
   const unsubscribe = await bridge.onAdminProgress((p) =>
     setStatus(`Measuring… ${p.measured} of ${p.total} areas done`),
   )
   try {
-    const report = await bridge.scanRestricted(state.scanId)
+    const report = await bridge.scanRestricted(subject)
     unsubscribe()
+    // The report names the scan it grafted into. If that is no longer the scan on screen,
+    // painting it would replace the user's new flower with an old one's — and the status
+    // line below would subtract against the wrong baseline.
+    if (report.scan_id !== state.scanId) return
     // The backend grafted the measured subtrees and returned a fresh whole-tree view.
     state.stack = [{ nodeId: null, view: report.view }]
     sunburst.setView(report.view)
@@ -222,6 +229,14 @@ function showError(text: string): void {
  * rather than somebody else's disk on screen.
  */
 function beginScan(path: string): void {
+  // Stop the previous scan's growth animation first: it is a global frame loop that repaints
+  // from module state, so clearing the canvas without stopping it lets the old flower paint
+  // itself back over the new empty stage.
+  stopPartial()
+  pendingDrill = null
+  partialRootName = ''
+
+  state.scanId = ''
   state.stack = []
   state.rootPath = path
   state.collectedTotal = 0
@@ -242,7 +257,12 @@ async function scanPath(path: string): Promise<void> {
   // into one view — the breadcrumb from one, the progress counter from the other — and the
   // app wedges on the older scan's progress for ever. Observed 2026-11-02.
   const token = ++scanToken
+  // Stamped on every branch report this scan's walk emits, so a listener that outlives its
+  // scan cannot feed the next one somebody else's numbers.
+  const nonce = String(token)
 
+  // The stage is cleared synchronously, before any await. An await here would let a slower
+  // superseded scan resume afterwards and wipe the newer scan's stage.
   overview.hidden = true
   // Every panel describes the screen that was on it; a new scan makes them stale.
   closeOverlays()
@@ -250,19 +270,30 @@ async function scanPath(path: string): Promise<void> {
   beginScan(path)
   setStatus('Scanning…')
   document.body.classList.add('scanning')
+
+  // Picking a directory is itself the cancellation of the last one. Without this the
+  // abandoned walk keeps reading the disk and competes with the scan that was just asked
+  // for; measured, a 12 MB scan behind a volume scan had not finished after 75 seconds.
+  await bridge.cancelScan().catch(() => {
+    // A cancel that cannot be delivered is not a reason to refuse the scan that follows.
+  })
+  // The cancel was an await, so a newer scan may have taken the stage while it ran.
+  if (token !== scanToken) return
+
   let unsubscribe: (() => void) | null = null
   try {
     const names = await bridge.peekRoot(path)
     if (token !== scanToken) return
     startPartial(names, path.split('/').filter(Boolean).pop() ?? path)
     unsubscribe = await bridge.onScanProgress((branch) => {
-      // A superseded scan keeps measuring in the backend, but its progress is somebody
-      // else's story now.
-      if (token !== scanToken) return
+      // Two filters, and both are load-bearing: the token drops a superseded scan's own
+      // listener, and the nonce stops the *new* listener from consuming the *old* walk's
+      // reports, which share one global event name and carry no other identity.
+      if (token !== scanToken || branch.nonce !== nonce) return
       updatePartial(branch.name, branch.bytes)
     })
 
-    const result = await bridge.scan(path)
+    const result = await bridge.scan(path, nonce)
     // Superseded while the walk ran: leave the newer scan's stage alone, including its
     // measuring petals, which `stopPartial` would otherwise clear out from under it.
     if (token !== scanToken) return
@@ -322,7 +353,18 @@ async function scanPath(path: string): Promise<void> {
     // A superseded scan's failure is not this screen's news.
     if (token === scanToken) {
       stopPartial()
-      setStatus(`Scan failed: ${String(error)}`)
+      const message = String(error)
+      // A deliberate cancellation is not a failure, and telling the user it is would be the
+      // same mistake as reporting a refused dialog as a crash. The backend answers with
+      // this exact sentence when the walk observes the request.
+      if (message.includes('scan cancelled')) {
+        setStatus('Scan cancelled')
+      } else {
+        // The measuring petals would otherwise stay painted under an empty contents list,
+        // looking like a scan that is still running.
+        sunburst.setView([])
+        setStatus(`Scan failed: ${message}`)
+      }
     }
   } finally {
     unsubscribe?.()

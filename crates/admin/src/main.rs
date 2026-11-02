@@ -448,6 +448,14 @@ fn measure(path: &Path, deadline: Instant) -> Tree {
     let opts = ScanOptions {
         max_entries: None,
         deadline: Some(deadline),
+        // The privileged helper has its own deadline and no channel to be cancelled through;
+        // a root walk that is already running finishes its budget or its roots.
+        //
+        // If a cancel is ever wired here, note what the fallback below does: this function
+        // maps *any* `ScanError` to a one-node Restricted tree, so a `Cancelled` would be
+        // handed back as a restricted *measurement* and grafted as one. Cancellation is not
+        // a measurement and must not become one.
+        cancel: None,
     };
     match scan(path, &opts) {
         Ok(tree) => tree,

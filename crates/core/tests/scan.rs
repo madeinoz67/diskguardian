@@ -194,6 +194,7 @@ fn an_expired_deadline_reports_restricted_nodes_never_zero() {
         &ScanOptions {
             max_entries: None,
             deadline: Some(spent),
+            cancel: None,
         },
     )
     .expect("scan must still succeed");
@@ -723,4 +724,109 @@ fn a_symlinked_root_is_walked_not_treated_as_a_file() {
     );
     assert_eq!(tree.file_count(), 1, "and its contents are walked");
     assert!(tree.total_bytes() > 0);
+}
+
+#[test]
+fn a_cancelled_walk_returns_no_tree_instead_of_a_partial_one() {
+    // The flag is set before the walk so this is deterministic. It proves the check exists
+    // and what it does; a live race would prove less on most runs.
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("payload.bin"), vec![9u8; 8192]).expect("write");
+
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let cancelled = ScanOptions {
+        cancel: Some(cancel),
+        ..Default::default()
+    };
+
+    match scan(dir.path(), &cancelled) {
+        Err(diskguardian_core::ScanError::Cancelled) => {}
+        other => panic!("a cancelled walk must return Cancelled, not a tree: {other:?}"),
+    }
+
+    // The control: the same tree, no request, scans normally. A check that also blocked
+    // ordinary scans would pass the assertion above and break the product.
+    let tree = scan(dir.path(), &Default::default()).expect("control scan");
+    assert_eq!(tree.file_count(), 1);
+    assert!(tree.total_bytes() > 0);
+}
+
+#[test]
+fn a_file_root_honours_a_cancellation_request_too() {
+    // A file root has no directory to poll, so the in-walk checks never run. Before this
+    // was fixed, dropping a single file on the window with a request standing returned a
+    // completed scan — the one shape where a cancelled walk was presented as a result.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("one.bin");
+    fs::write(&file, vec![3u8; 4096]).expect("write");
+
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let opts = ScanOptions {
+        cancel: Some(cancel),
+        ..Default::default()
+    };
+
+    match scan(&file, &opts) {
+        Err(diskguardian_core::ScanError::Cancelled) => {}
+        other => panic!("a cancelled file scan must return Cancelled: {other:?}"),
+    }
+}
+
+#[test]
+fn a_cancel_raised_part_way_through_the_walk_stops_it() {
+    // The first branch report trips the flag, so this exercises the polls the walk reaches
+    // *after* the walk has started — the listing loop, the measurement loop and the
+    // directory dispatch — rather than the pre-set boundary the other tests cover.
+    let dir = tempfile::tempdir().expect("tempdir");
+    for i in 0..64 {
+        fs::write(dir.path().join(format!("f{i:02}.bin")), vec![5u8; 2048]).expect("write");
+    }
+
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let trip = cancel.clone();
+    let progress: diskguardian_core::ProgressFn = std::sync::Arc::new(move |_branch| {
+        trip.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    let opts = ScanOptions {
+        cancel: Some(cancel),
+        ..Default::default()
+    };
+
+    match diskguardian_core::scan_with_progress(dir.path(), &opts, Some(progress)) {
+        Err(diskguardian_core::ScanError::Cancelled) => {}
+        other => panic!("a walk cancelled mid-flight must not return a tree: {other:?}"),
+    }
+}
+
+#[test]
+fn an_abandoned_walk_stops_reporting_branches() {
+    // Refutation finding: the tree was discarded but the progress channel kept talking. A
+    // cancelled walk's branch reports are indistinguishable from the next scan's — one global
+    // event name — so they were applied to the replacement scan's petals as its own numbers.
+    let dir = tempfile::tempdir().expect("tempdir");
+    for i in 0..64 {
+        fs::write(dir.path().join(format!("f{i:02}.bin")), vec![5u8; 2048]).expect("write");
+    }
+
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let trip = cancel.clone();
+    let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = seen.clone();
+    let progress: diskguardian_core::ProgressFn = std::sync::Arc::new(move |_branch| {
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        trip.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    let opts = ScanOptions {
+        cancel: Some(cancel),
+        ..Default::default()
+    };
+    let _ = diskguardian_core::scan_with_progress(dir.path(), &opts, Some(progress));
+
+    assert_eq!(
+        seen.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "the report that trips the flag is the last one the walk may emit"
+    );
 }

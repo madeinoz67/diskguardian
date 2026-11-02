@@ -102,8 +102,19 @@ The default action moves collected items to the macOS Trash, and a file deleted 
 
 ### C13 — Scanning does not freeze the window  `[x]`
 While a scan runs, the window still paints, the UI reports progress, and clicks land. A scan of
-another path *may* be started; the newest scan owns the screen and the older one finishes unseen.
+another path *may* be started; the newest scan owns the screen, and the older one is stopped
+rather than left to finish unseen.
 **Falsifier:** window beachballs or progress stops updating during the scan.
+**CORRECTED 2026-11-02 after review — the mechanism sentence above was not yet true.** The first
+version of this claim said the older scan "finishes unseen", which the scan token does not
+deliver: `scan-progress` events carry no scan identity, so the *new* scan's listener accepts the
+old scan's branch reports and applies them by name. Two trees sharing a child name (`src`,
+`target`, `node_modules`) mark the new scan's petal done at the old scan's width. The token stops
+the stale listener from painting; it never stopped the fresh one from listening. A review lane
+found this by reading the event plumbing after the fix had been verified by screenshot — the
+screenshots were of a tree with no shared child names. The fix is a per-scan nonce carried on
+every progress event and on the progress emitter, gated so a cancelled walk emits nothing; it is
+folded with the cancellation branch below.
 **Verified 2026-11-02 on the built app**, twice (a 17-second scan of a million-file tree and a
 volume scan): the progress counter climbed (`Measuring… 9 of 21 done`), petals grew while it
 ran, and clicks were accepted mid-scan — including the breadcrumb that starts a second scan.
@@ -113,8 +124,8 @@ against a running volume scan, a 12 MB scan started behind it had still not comp
 later, because both walks compete for one rayon pool and there is no cancellation path through
 the IPC. The scan token stops the two from corrupting each other's view, which is what the
 screenshot before the fix showed — one scan's breadcrumb over another's totals and a white petal,
-wedged for ever. Serving two scans fairly is a different piece of work, now on the roadmap as
-R13 rather than implied by this claim.
+wedged for ever. Serving two scans fairly is a different piece of work, on the roadmap as **R14** rather than
+implied by this claim. (This paragraph previously said R13, which is the duplicate finder.)
 
 ### C14 — A million-node tree scans near the filesystem's own floor  `[x]`
 A scan of a ≥1M-node developer tree completes in **no more than 1.15× the wall clock of
@@ -506,7 +517,16 @@ increment opens.
 - **R11 — Lower**: cloud accounts, parallel multi-disk scanning, disk images, network
   volumes, Forget scan results.
 - **R14 — Concurrent scans are served fairly, or refused** (opened 2026-11-02 from C13's
-  narrowing). Today a scan started behind a large one does not complete until the large one
+  narrowing; **half landed 2026-11-02**). A superseded scan is now asked to stop and, if it
+  observes the request, returns `ScanError::Cancelled` with no tree — checked before the walk,
+  per directory, per listing entry, per measurement entry, and before the directory dispatch.
+  What remains open, named rather than implied: the flag is **one slot per app**, so the
+  operation it can express is "cancel the most recently registered walk", not "cancel exactly
+  the scan I superseded" — a canccel arriving during the superseded scan's `peekRoot` finds an
+  empty slot and lets that walk run. Making it per-generation needs the request to carry an id;
+  that and fair scheduling are the rest of this row. There is also no Cancel button yet, so
+  every canceller is a superseding scan and the "cancelled reads as failed" path is unmasked
+  but untested in anger. Today a scan started behind a large one does not complete until the large one
   does: both walks submit to one rayon pool and nothing cancels the superseded one. Two honest
   shapes, and the cheaper one is probably right — either refuse to start a scan while one is in
   flight and say so on the button, or give each scan its own pool and add a cancel path through
@@ -526,6 +546,22 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-02 — Review found what the gates could not. Three lanes (code review, refutation,
+  mechanism critique) ran against the day's fixes and produced sixteen findings, six of them
+  MEDIUM or blocking. The pattern worth keeping: **every one that mattered was found by reading
+  the plumbing, not by running the thing.** The scan-token fix stopped a stale listener painting
+  but never stopped a fresh listener listening, because `scan-progress` carries no scan identity
+  — the screenshots were of a fixture whose trees shared no child names, which is exactly the
+  case that hides it. The cancellation flag was ignored entirely for a file root. The
+  measurement loop was unpolled, so cancelling a wide directory still stat'ed everything already
+  collected (3.9 µs/entry measured). And a privileged pass could overwrite a newer scan's view,
+  because `AdminScanReport` named no scan. All folded: progress events are stamped with a
+  per-start nonce and filtered on it, a cancelled walk emits nothing, both root shapes honour the
+  request, the measurement loop polls, the admin report carries its `scan_id` and the frontend
+  drops a report for a scan it is no longer showing, `beginScan` stops the old animation, and the
+  stage is cleared before the one await in `scanPath` rather than after it. Two of my own
+  claims were wrong and are corrected above rather than edited away.
 
 - 2026-11-02 — C13 closed and narrowed; C8 closed. Driving the built app verified both
   directions of navigation (petal re-roots, centre restores exactly) and showed that a scan

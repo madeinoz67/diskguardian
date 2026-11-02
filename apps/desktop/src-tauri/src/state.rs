@@ -23,6 +23,11 @@ pub struct AppState {
     /// serving helper with this instead of raising the real osascript dialog.
     /// Production leaves it `None`; the job/results protocol is identical either way.
     pub admin_launch: Mutex<Option<crate::admin::Launch>>,
+    /// The flag the walk in flight is watching, if there is one. One cell, written by whoever
+    /// registers a scan most recently and read only by `cancel_scan` — so the operation this
+    /// can express is "cancel the most recently registered walk", not "cancel the walk I
+    /// superseded". Correcting that needs a per-request identity (ISA R14).
+    pub scan_cancel: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl AppState {

@@ -28,6 +28,7 @@ pub use duplicates::{
 };
 pub use model::{GraftError, Node, NodeId, NodeKind, Tree};
 pub use scan::{
-    scan, scan_with_progress, BranchDone, ProgressFn, ScanError, ScanOptions, DEADLINE_NOTE,
+    scan, scan_with_progress, BranchDone, ProgressFn, ScanError, ScanOptions, CANCELLED_NOTE,
+    DEADLINE_NOTE,
 };
 pub use view::{build_view, ViewNode, ViewOptions};

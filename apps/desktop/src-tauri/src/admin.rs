@@ -44,6 +44,10 @@ const HEARTBEAT_EVERY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AdminScanReport {
+    /// Which scan this was grafted into. A privileged pass can outlive the scan that asked
+    /// for it — the user picks another folder while root is still walking — so the report
+    /// has to name its own subject or the frontend cannot tell whether to paint it.
+    pub scan_id: String,
     /// How many restricted roots received measured subtrees.
     pub patched: u32,
     /// How many remain restricted after the pass (refused by TCC, past the deadline,
@@ -424,6 +428,7 @@ pub async fn scan_restricted<R: tauri::Runtime>(
         let scans = lock_scans(&state)?;
         let scan = scans.get(&scan_id).ok_or("unknown scan")?;
         AdminScanReport {
+            scan_id: scan_id.clone(),
             patched,
             still_restricted: scan.tree.restricted_roots().len() as u32,
             bytes: scan.tree.total_bytes(),
