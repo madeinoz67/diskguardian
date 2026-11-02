@@ -1051,3 +1051,123 @@ fn duplicates_never_proposes_one_name_of_a_shared_inode() {
         "exactly the linked name is excluded: {report}"
     );
 }
+
+// ─── local snapshots ──────────────────────────────────────────────────────────────────
+//
+// The purge command is destructive and, on a real machine, would need administrator rights
+// it deliberately does not have. Nothing here runs `tmutil` for real: the module's runner
+// seam stands in for it, so these tests prove the command's answers without a single
+// snapshot being touched.
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_refused_purge_is_reported_in_words_and_deletes_nothing() {
+    use diskguardian_app::snapshots::{set_runner_for_tests, TmOutput};
+
+    const ONE: &str = "Snapshots for disk /:\ncom.apple.TimeMachine.2026-11-01-085943.local\n";
+
+    fn refusing(args: &[String]) -> TmOutput {
+        if args.first().map(String::as_str) == Some("listlocalsnapshots") {
+            TmOutput {
+                ok: true,
+                stdout: ONE.to_string(),
+                stderr: String::new(),
+            }
+        } else {
+            TmOutput {
+                ok: false,
+                stdout: String::new(),
+                stderr: "tmutil: deletelocalsnapshots requires root privileges.".to_string(),
+            }
+        }
+    }
+
+    fn succeeding(args: &[String]) -> TmOutput {
+        if args.first().map(String::as_str) == Some("listlocalsnapshots") {
+            TmOutput {
+                ok: true,
+                stdout: "Snapshots for disk /:\n".to_string(),
+                stderr: String::new(),
+            }
+        } else {
+            TmOutput {
+                ok: true,
+                stdout: String::new(),
+                stderr: String::new(),
+            }
+        }
+    }
+
+    let app = build();
+    let webview = webview(&app);
+
+    set_runner_for_tests(Some(refusing));
+    let listed = call(&webview, "local_snapshots", serde_json::json!({})).expect("list");
+    assert_eq!(
+        listed["snapshots"].as_array().expect("snapshots").len(),
+        1,
+        "the listing must survive to the frontend: {listed}"
+    );
+    assert_eq!(listed["supported"], serde_json::Value::Bool(true));
+
+    let report = call(
+        &webview,
+        "purge_local_snapshots",
+        serde_json::json!({ "confirmed": true }),
+    )
+    .expect("purge");
+
+    assert_eq!(report["purged"], serde_json::Value::Bool(false));
+    assert_eq!(
+        report["refused"],
+        serde_json::Value::Bool(true),
+        "a root-rights refusal is its own outcome, not a generic failure: {report}"
+    );
+    let message = report["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("administrator rights"),
+        "the message must name the cause: {message}"
+    );
+    assert!(
+        message.contains("System Settings"),
+        "the message must say what the user can do instead: {message}"
+    );
+    // A refused purge deleted nothing, so the snapshot is still listed.
+    assert_eq!(report["remaining"].as_array().expect("remaining").len(), 1);
+
+    // The other outcome: when tmutil does succeed, the report says so and the list is empty.
+    set_runner_for_tests(Some(succeeding));
+    let done = call(
+        &webview,
+        "purge_local_snapshots",
+        serde_json::json!({ "confirmed": true }),
+    )
+    .expect("purge");
+    assert_eq!(done["purged"], serde_json::Value::Bool(true));
+    assert_eq!(done["refused"], serde_json::Value::Bool(false));
+    assert_eq!(done["remaining"].as_array().expect("remaining").len(), 0);
+
+    set_runner_for_tests(None);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_purge_without_confirmation_is_refused_before_anything_runs() {
+    let app = build();
+    let webview = webview(&app);
+
+    let result = call(
+        &webview,
+        "purge_local_snapshots",
+        serde_json::json!({ "confirmed": false }),
+    );
+
+    assert!(result.is_err(), "an unconfirmed purge must not proceed");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("explicit confirmation"),
+        "the error must say what is missing"
+    );
+}

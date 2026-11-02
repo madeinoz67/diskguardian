@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 19/26
+progress: 20/27
 iteration: 1
 created: 2026-10-30
 ---
@@ -316,6 +316,30 @@ spent budget presented as "no duplicates".
 **Honest limit:** the panel offers collection, not deletion; the clone caveat is the reason,
 and clone detection remains R6.
 
+### C27 — Local snapshots are visible, and the purge tells the truth about privilege  `[x]`
+The overview reports how many APFS local Time Machine snapshots the boot volume holds and when
+each was taken. Nothing invents a size for them: macOS reports existence, not occupancy, so the
+list carries timestamps and the only measured figure — how far free space actually moved — is
+read before and after a purge attempt. Purging runs `tmutil` **as the user and never elevated**;
+when macOS refuses for want of administrator rights, the refusal is its own reported outcome,
+naming the cause and the route that works, rather than a silent "0 freed".
+**Probe:** `cargo test -p diskguardian-app` — 5 unit tests on `parse_listing`/`is_stamp` (the
+header and the empty answer are not snapshots, seven malformed stamps are ignored, a snapshot
+name inside a sentence line is not a snapshot, stamps are the only accepted date shape) and 2
+IPC tests driving the real command surface through an injected `tmutil` runner: the root-rights
+refusal returns `refused: true`, `purged: false`, a message naming administrator rights and
+System Settings, and the snapshot still listed; a success returns `purged: true` with an empty
+list; and an unconfirmed purge is refused before anything runs. `bun test` on `snapshots.ts`
+proves no size is ever rendered beside a snapshot, that a failed listing is never rendered as
+an empty one, and that purge is offered only when there is something to purge.
+**Falsifier:** a per-snapshot size shown, a failed listing shown as "none", a refusal shown as
+success, or a privileged delete call site added anywhere.
+**Not observed, stated rather than glossed:** the purge has never been executed against real
+snapshots. This machine holds 24 of them and deleting them was not authorised, so the command
+path is proven through the injected runner and the real refusal branch is inferred from
+tmutil's own `requires root privileges` string. The first real purge is the observation that
+closes that gap.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -381,7 +405,10 @@ increment opens.
 - **R13 — Duplicate finder**: DONE (C24 engine, C26 panel). Size, then head/tail, then full
   BLAKE3; content-identical with the clone caveat shown as visible text.
 - **R3 — Admin scanning**: read restricted petals by scanning as root. Largest real win.
-- **R4 — APFS local snapshots**: list and purge; invisible in Finder, often tens of GB.
+- **R4 — APFS local snapshots**: DONE (C27) as far as this project's rules allow. Listed with
+  timestamps, purge offered as the user, refusal reported in words. A privileged purge stays
+  unbuilt by decision (2026-11-02): measurement is the only thing that runs elevated, and the
+  privileged side has no delete call sites.
 - **R5 — Hidden space**: purgeable, other APFS volumes, still-hidden items as a virtual node.
 - **R6 — APFS clone detection**: accuracy, so clones stop counting twice.
 - **R7 — Reveal in Finder + Quick Look wiring** on the selected petal.
