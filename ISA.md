@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 20/27
+progress: 19/27
 iteration: 1
 created: 2026-10-30
 ---
@@ -316,7 +316,7 @@ spent budget presented as "no duplicates".
 **Honest limit:** the panel offers collection, not deletion; the clone caveat is the reason,
 and clone detection remains R6.
 
-### C27 — Local snapshots are visible, and the purge tells the truth about privilege  `[x]`
+### C27 — Local snapshots are visible, and the purge tells the truth about privilege  `[ ]`
 The overview reports how many APFS local Time Machine snapshots the boot volume holds and when
 each was taken. Nothing invents a size for them: macOS reports existence, not occupancy, so the
 list carries timestamps and the only measured figure — how far free space actually moved — is
@@ -334,6 +334,12 @@ proves no size is ever rendered beside a snapshot, that a failed listing is neve
 an empty one, and that purge is offered only when there is something to purge.
 **Falsifier:** a per-snapshot size shown, a failed listing shown as "none", a refusal shown as
 success, or a privileged delete call site added anywhere.
+**Why this claim is still open despite green tests:** the panel has never been looked at. The
+bundle was rebuilt and launched to photograph it, and the screen locked before the capture, so
+the one check this project requires for appearance — a screenshot whose pixels someone looked
+at — did not happen. Everything else is verified: the wiring is closed by `tsc`, by every
+element id `main.ts` requests existing in `index.html`, and by the model tests. The claim closes
+on the first visual pass, which is one launch away.
 **Not observed, stated rather than glossed:** the purge has never been executed against real
 snapshots. This machine holds 24 of them and deleting them was not authorised, so the command
 path is proven through the injected runner and the real refusal branch is inferred from
@@ -435,6 +441,19 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-02 — Local snapshots shipped as far as the rules allow (C27, open on appearance).
+  A "Local snapshots" row on the overview, a panel listing every APFS local Time Machine
+  snapshot with its timestamp and no invented size, and a purge that runs `tmutil` as the user
+  and reports a macOS refusal as its own outcome with the cause and the route that works.
+  Principal decision recorded: a privileged purge stays unbuilt — measurement is the only thing
+  that runs elevated, and the privileged side has no delete call sites. 5 unit tests on the
+  listing parser, 2 IPC tests through an injected runner, 10 frontend model tests, and a
+  bridge test that pins the browser demo to never claim a purge succeeded.
+  Two things are honestly not done: the purge has never run against real snapshots (24 exist on
+  this machine and deleting them was not authorised), and the panel has never been photographed
+  — the bundle was rebuilt and launched, and the screen locked before the capture. The claim
+  stays open on that second point alone.
 
 - 2026-11-02 — C18 closed on one click, and the honest reading is that nothing was broken.
   A `+` in the contents list of the built app moved the collector from 0 bytes to 4 MB, turned
