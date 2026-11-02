@@ -128,6 +128,12 @@ interface Frame {
   view: ViewNode[]
 }
 
+/**
+ * Bumped by every scan start. A scan holding a stale token is no longer the one on screen,
+ * so its progress and its result are dropped rather than painted over the newer scan.
+ */
+let scanToken = 0
+
 const state = {
   scanId: '',
   rootPath: '',
@@ -231,6 +237,12 @@ function beginScan(path: string): void {
 }
 
 async function scanPath(path: string): Promise<void> {
+  // A newer scan supersedes this one: its branch reports and its result must never reach the
+  // screen. Without this, starting a second scan while the first runs interleaves two scans
+  // into one view — the breadcrumb from one, the progress counter from the other — and the
+  // app wedges on the older scan's progress for ever. Observed 2026-11-02.
+  const token = ++scanToken
+
   overview.hidden = true
   // Every panel describes the screen that was on it; a new scan makes them stale.
   closeOverlays()
@@ -241,10 +253,19 @@ async function scanPath(path: string): Promise<void> {
   let unsubscribe: (() => void) | null = null
   try {
     const names = await bridge.peekRoot(path)
+    if (token !== scanToken) return
     startPartial(names, path.split('/').filter(Boolean).pop() ?? path)
-    unsubscribe = await bridge.onScanProgress((branch) => updatePartial(branch.name, branch.bytes))
+    unsubscribe = await bridge.onScanProgress((branch) => {
+      // A superseded scan keeps measuring in the backend, but its progress is somebody
+      // else's story now.
+      if (token !== scanToken) return
+      updatePartial(branch.name, branch.bytes)
+    })
 
     const result = await bridge.scan(path)
+    // Superseded while the walk ran: leave the newer scan's stage alone, including its
+    // measuring petals, which `stopPartial` would otherwise clear out from under it.
+    if (token !== scanToken) return
     stopPartial()
     state.scanId = result.scan_id
     state.rootPath = path
@@ -298,11 +319,14 @@ async function scanPath(path: string): Promise<void> {
       }
     }
   } catch (error) {
-    stopPartial()
-    setStatus(`Scan failed: ${String(error)}`)
+    // A superseded scan's failure is not this screen's news.
+    if (token === scanToken) {
+      stopPartial()
+      setStatus(`Scan failed: ${String(error)}`)
+    }
   } finally {
     unsubscribe?.()
-    document.body.classList.remove('scanning')
+    if (token === scanToken) document.body.classList.remove('scanning')
   }
 }
 
