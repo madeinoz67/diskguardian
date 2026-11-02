@@ -13,9 +13,15 @@ pub struct Scan {
 pub struct AppState {
     pub scans: Mutex<HashMap<String, Scan>>,
     pub next_scan: Mutex<u64>,
-    /// Test seam for administrator measurement: when set, `scan_restricted` runs this
-    /// launcher instead of raising the real osascript dialog. Production leaves it
-    /// `None`; the protocol above the launcher is identical either way.
+    /// The administrator measurement session: one staging directory and one spent
+    /// dialog per app run (principal's 2026-11-02 amendment). Dropped with the app,
+    /// which removes the staging directory and ends the privileged helper.
+    /// Async because the one launch that may start it is user-paced (the OS dialog)
+    /// and concurrent passes must queue behind it, not stack a second prompt.
+    pub admin_session: tauri::async_runtime::Mutex<Option<crate::admin::AdminSession>>,
+    /// Test seam for administrator measurement: when set, `scan_restricted` starts the
+    /// serving helper with this instead of raising the real osascript dialog.
+    /// Production leaves it `None`; the job/results protocol is identical either way.
     pub admin_launch: Mutex<Option<crate::admin::Launch>>,
 }
 
