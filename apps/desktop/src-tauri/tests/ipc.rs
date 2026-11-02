@@ -1171,3 +1171,17 @@ fn a_purge_without_confirmation_is_refused_before_anything_runs() {
         "the error must say what is missing"
     );
 }
+
+#[test]
+fn cancelling_with_nothing_running_is_a_quiet_no_op() {
+    // The frontend calls this before every scan, so the first call of an app run finds no
+    // walk to cancel. It must answer, not error, and certainly not panic.
+    let app = build();
+    let webview = webview(&app);
+
+    let first = call(&webview, "cancel_scan", serde_json::json!({}));
+    let second = call(&webview, "cancel_scan", serde_json::json!({}));
+
+    assert!(first.is_ok(), "the first cancel must not fail: {first:?}");
+    assert!(second.is_ok(), "and it stays idempotent: {second:?}");
+}

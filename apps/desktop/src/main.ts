@@ -243,6 +243,13 @@ async function scanPath(path: string): Promise<void> {
   // app wedges on the older scan's progress for ever. Observed 2026-11-02.
   const token = ++scanToken
 
+  // Picking a directory is itself the cancellation of the last one. Without this the
+  // abandoned walk keeps reading the disk and competes with the scan that was just asked
+  // for; measured, a 12 MB scan behind a volume scan had not finished after 75 seconds.
+  await bridge.cancelScan().catch(() => {
+    // A cancel that cannot be delivered is not a reason to refuse the scan that follows.
+  })
+
   overview.hidden = true
   // Every panel describes the screen that was on it; a new scan makes them stale.
   closeOverlays()

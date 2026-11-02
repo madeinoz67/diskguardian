@@ -19,6 +19,7 @@ pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             commands::home_dir,
             commands::volumes,
             commands::scan,
+            commands::cancel_scan,
             commands::peek_root,
             commands::view,
             commands::collect,

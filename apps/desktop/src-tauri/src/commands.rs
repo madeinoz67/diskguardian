@@ -148,6 +148,18 @@ pub async fn scan<R: tauri::Runtime>(
         return Err(format!("{path} does not exist"));
     }
 
+    // The walk in flight watches this flag. A newer scan sets it, so the abandoned walk stops
+    // instead of competing for the machine with the scan the user actually asked for.
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let clear_me = cancel.clone();
+    {
+        let mut slot = state
+            .scan_cancel
+            .lock()
+            .map_err(|_| "scan state is poisoned by an earlier panic".to_string())?;
+        *slot = Some(cancel.clone());
+    }
+
     // Each branch is emitted the moment its subtree is measured, so the flower grows
     // instead of appearing at the end.
     let handle = app.clone();
@@ -155,16 +167,28 @@ pub async fn scan<R: tauri::Runtime>(
         let _ = handle.emit("scan-progress", &branch);
     });
 
-    let scanned = tauri::async_runtime::spawn_blocking(move || {
-        scan_with_progress(
-            &root,
-            &diskguardian_core::ScanOptions::default(),
-            Some(progress),
-        )
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        let options = diskguardian_core::ScanOptions {
+            cancel: Some(cancel),
+            ..Default::default()
+        };
+        scan_with_progress(&root, &options, Some(progress))
     })
     .await
-    .map_err(|e| format!("scan task failed: {e}"))?
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("scan task failed: {e}"))?;
+
+    // Retire the flag whether the walk finished, failed or was cancelled: leaving a spent
+    // flag in the slot would cancel the next scan before it started.
+    if let Ok(mut slot) = state.scan_cancel.lock() {
+        if slot
+            .as_ref()
+            .is_some_and(|flag| Arc::ptr_eq(flag, &clear_me))
+        {
+            *slot = None;
+        }
+    }
+
+    let scanned = outcome.map_err(|e| e.to_string())?;
 
     let name = scanned.nodes[scanned.root].name.clone();
     let bytes = scanned.total_bytes();
@@ -186,6 +210,20 @@ pub async fn scan<R: tauri::Runtime>(
         partial,
         view,
     })
+}
+
+/// Ask the walk in flight to stop. The idempotent no-op case matters: the frontend calls this
+/// before every scan, including the first one of an app run.
+#[tauri::command]
+pub fn cancel_scan(state: State<'_, AppState>) -> Result<(), String> {
+    let slot = state
+        .scan_cancel
+        .lock()
+        .map_err(|_| "scan state is poisoned by an earlier panic".to_string())?;
+    if let Some(flag) = slot.as_ref() {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 #[tauri::command]

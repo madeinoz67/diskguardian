@@ -23,6 +23,10 @@ pub struct AppState {
     /// serving helper with this instead of raising the real osascript dialog.
     /// Production leaves it `None`; the job/results protocol is identical either way.
     pub admin_launch: Mutex<Option<crate::admin::Launch>>,
+    /// The flag the walk in flight is watching, if there is one. A new scan sets it before
+    /// starting, so picking another directory stops the old walk instead of leaving it to
+    /// compete for the machine with the scan the user actually asked for.
+    pub scan_cancel: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl AppState {

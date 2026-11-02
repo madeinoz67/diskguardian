@@ -448,6 +448,9 @@ fn measure(path: &Path, deadline: Instant) -> Tree {
     let opts = ScanOptions {
         max_entries: None,
         deadline: Some(deadline),
+        // The privileged helper has its own deadline and no channel to be cancelled through;
+        // a root walk that is already running finishes its budget or its roots.
+        cancel: None,
     };
     match scan(path, &opts) {
         Ok(tree) => tree,

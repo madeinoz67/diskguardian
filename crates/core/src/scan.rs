@@ -67,6 +67,10 @@ pub enum ScanError {
         #[source]
         source: std::io::Error,
     },
+    /// The caller asked for the walk to stop. Deliberately not a partial tree: see
+    /// [`ScanOptions::cancel`].
+    #[error("scan cancelled")]
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -79,11 +83,21 @@ pub struct ScanOptions {
     /// The caller cannot rely on killing the process (an elevated walker belongs to
     /// root), so the walker enforces its own budget, exactly like `max_entries`.
     pub deadline: Option<Instant>,
+    /// Set by the caller to abandon the walk — the user picked another directory, or closed
+    /// the window. Unlike a deadline, cancellation is not a partial answer: the walk returns
+    /// [`ScanError::Cancelled`] and no tree at all, because a half-built tree shown as a scan
+    /// would be a claim about the disk that nobody measured.
+    pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// The `note` a deadline-hit directory carries. Public so the caller that set the
 /// deadline can recognise its own budget in the result.
 pub const DEADLINE_NOTE: &str = "deadline reached";
+
+/// The `note` a directory carries when the walk was abandoned under it. Only ever seen inside
+/// a tree that is then discarded, but a note is cheaper than a silent empty directory if that
+/// ever stops being true.
+pub const CANCELLED_NOTE: &str = "scan cancelled";
 
 /// One finished child of the scan root, reported the moment it completes so a UI can
 /// draw it without waiting for the whole tree.
@@ -129,6 +143,8 @@ pub fn scan_with_progress(
         seen: Mutex::new(HashSet::new()),
         max_entries: opts.max_entries,
         deadline: opts.deadline,
+        cancel: opts.cancel.clone(),
+        cancelled: std::sync::atomic::AtomicBool::new(false),
         visited: AtomicU64::new(0),
         errors: AtomicU64::new(0),
         progress,
@@ -140,6 +156,12 @@ pub fn scan_with_progress(
     } else {
         builder.leaf(name, &meta)
     };
+
+    // An abandoned walk produces no tree. Returning what it had reached would be a partial
+    // measurement presented as a scan of the volume.
+    if builder.cancelled.load(Ordering::Relaxed) {
+        return Err(ScanError::Cancelled);
+    }
 
     // One allocation for the arena: count first, then fill. Counting walks the
     // in-memory tree only, so it costs no syscalls.
@@ -219,6 +241,10 @@ struct Builder {
     seen: Mutex<HashSet<(u64, u64)>>,
     max_entries: Option<u64>,
     deadline: Option<Instant>,
+    cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Set once the walk has actually seen a cancellation request, so the caller can tell a
+    /// completed walk from an abandoned one without reading a flag it might have raced.
+    cancelled: std::sync::atomic::AtomicBool,
     visited: AtomicU64,
     errors: AtomicU64,
     progress: Option<ProgressFn>,
@@ -236,7 +262,22 @@ impl Builder {
         }
     }
 
+    /// Whether the caller has asked the walk to stop. Cheap enough to ask per directory:
+    /// one relaxed load, no syscall.
+    fn cancel_requested(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+    }
+
     fn walk_dir(&self, path: &Path, name: String, depth: usize) -> Scanned {
+        // Cancellation unwinds from here rather than measuring anything: every level still
+        // in flight returns immediately, so the whole walk stops in one pass down the tree.
+        if self.cancel_requested() {
+            self.cancelled.store(true, Ordering::Relaxed);
+            return restricted(name, path, CANCELLED_NOTE.to_string());
+        }
+
         // The budget is checked before the directory is opened, so a spent deadline
         // costs no syscalls and produces the same Restricted shape as a refusal.
         if self
@@ -267,6 +308,12 @@ impl Builder {
         let mut entries = read_dir;
         let mut interruptions = 0u32;
         loop {
+            // Also checked per entry: one huge flat directory would otherwise hold the walk
+            // to the end of its listing before the next directory boundary noticed.
+            if self.cancel_requested() {
+                self.cancelled.store(true, Ordering::Relaxed);
+                break;
+            }
             let entry = match entries.next() {
                 None => break,
                 Some(Ok(entry)) => entry,

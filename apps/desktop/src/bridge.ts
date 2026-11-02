@@ -56,6 +56,15 @@ export async function scan(path: string): Promise<ScanResponse> {
   return invoke<ScanResponse>('scan', { path })
 }
 
+/**
+ * Ask the walk in flight to stop. Called before every scan, so it has to be a no-op when
+ * nothing is running — which is the common case.
+ */
+export async function cancelScan(): Promise<void> {
+  if (!isTauri) return
+  await invoke('cancel_scan')
+}
+
 export async function view(scanId: string, nodeId: number | null): Promise<ViewNode[]> {
   if (!isTauri) return demoView(nodeId)
   return invoke<ViewNode[]>('view', { scanId, nodeId })

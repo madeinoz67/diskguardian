@@ -194,6 +194,7 @@ fn an_expired_deadline_reports_restricted_nodes_never_zero() {
         &ScanOptions {
             max_entries: None,
             deadline: Some(spent),
+            cancel: None,
         },
     )
     .expect("scan must still succeed");
@@ -722,5 +723,30 @@ fn a_symlinked_root_is_walked_not_treated_as_a_file() {
         "the root is a directory once the link is followed"
     );
     assert_eq!(tree.file_count(), 1, "and its contents are walked");
+    assert!(tree.total_bytes() > 0);
+}
+
+#[test]
+fn a_cancelled_walk_returns_no_tree_instead_of_a_partial_one() {
+    // The flag is set before the walk so this is deterministic. It proves the check exists
+    // and what it does; a live race would prove less on most runs.
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("payload.bin"), vec![9u8; 8192]).expect("write");
+
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let cancelled = ScanOptions {
+        cancel: Some(cancel),
+        ..Default::default()
+    };
+
+    match scan(dir.path(), &cancelled) {
+        Err(diskguardian_core::ScanError::Cancelled) => {}
+        other => panic!("a cancelled walk must return Cancelled, not a tree: {other:?}"),
+    }
+
+    // The control: the same tree, no request, scans normally. A check that also blocked
+    // ordinary scans would pass the assertion above and break the product.
+    let tree = scan(dir.path(), &Default::default()).expect("control scan");
+    assert_eq!(tree.file_count(), 1);
     assert!(tree.total_bytes() > 0);
 }
