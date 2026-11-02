@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 22/27
+progress: 22/28
 iteration: 1
 created: 2026-10-30
 ---
@@ -431,6 +431,29 @@ snapshots. This machine holds 24 of them and deleting them was not authorised, s
 path is proven through the injected runner and the real refusal branch is inferred from
 tmutil's own `requires root privileges` string. The first real purge is the observation that
 closes that gap.
+
+### C28 — Favourite folders persist, and a favourite that has gone says so  `[ ]`
+Any folder visible in a scan can be starred from the contents list, and the current folder from
+the list's heading, without a dialog; whether a node is a favourite is resolved from its path on
+the Rust side, never guessed in the UI. Favourites persist in the app's own data directory as
+JSON and appear on the "Disks and folders" page above every other row, each with a Scan button
+and an unstar. Starring a folder that is already a favourite — including the other spelling of a
+symlinked path — is a no-op that never produces a second row. A favourite whose folder no longer
+exists stays on the page, marked unavailable in visible text with its Scan disabled, until it is
+unstarred.
+**Probe:** `cargo test -p diskguardian-app --test ipc favourites` — persistence across a relaunch
+on one store file; star-twice is a no-op; `/tmp` and `/private/tmp` spellings collapse; a deleted
+favourite is returned with `exists: false`; files and missing nodes are refused; relative paths
+are refused; a corrupt store is reported and reset, not silently emptied. `bun test` on
+`favourites.ts` — the model never filters missing favourites and never swallows the recovery
+notice.
+**Falsifier:** a duplicate favourites row; a missing favourite silently dropped; a favourite lost
+across relaunch; favourite state written anywhere by the webview rather than through the command
+surface.
+**Design:** `.claude/designs/2026-11-02-favourite-folders-design.md`. Two forks defaulted rather
+than asked (2026-11-02): favourites sit above **every** row, home and Trash included, and a
+case-only path difference is an accepted limit — it can produce a second row, visibly, and never
+loses data.
 
 ## Test Strategy
 
