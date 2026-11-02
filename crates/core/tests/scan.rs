@@ -3,6 +3,13 @@
 //! Every fixture is built on disk in a temp directory, because the thing under test is
 //! the filesystem's own accounting: `len()` versus `st_blocks`, inodes behind hard links,
 //! permission bits. A mocked tree would prove nothing.
+//!
+//! Platform-gated tests live in this file, so on another OS some helpers and imports are
+//! legitimately unused. `dead_code` and `unused_imports` are therefore allowed HERE and only
+//! here: they have cost three CI rounds because they cannot be reproduced on the developer's
+//! machine. Production code keeps `-D warnings`. The stricter alternative, once it is worth
+//! the churn, is to move each platform's tests into their own file-level `#![cfg(...)]` module.
+#![allow(dead_code, unused_imports)]
 
 use diskguardian_core::{
     build_view, scan, Collector, DeleteMode, NodeKind, ScanOptions, ViewOptions,

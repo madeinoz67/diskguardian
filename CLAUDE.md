@@ -48,6 +48,11 @@ cd apps/desktop && bun run tauri:build   # the bundle
   early development so merge to main is ok until i enable rules in the repo"). Feature work may
   still go on a branch for isolation, but a green branch merging straight back is the default.
   When branch protection or a PR gate is turned on, this line changes first, not after.
+- **Test files allow `dead_code` and `unused_imports`; production code does not.** Platform-gated
+  tests orphan their helpers on the platforms that skip them, and that failure cannot be
+  reproduced on a single machine — it has cost three CI rounds. The allowance is scoped to
+  `crates/core/tests/*.rs` with the reason written at the top of each file. It does not extend
+  to library or binary code, where `-D warnings` still holds.
 - **A platform-gated test gates its imports and helpers too.** Gating the test but leaving its
   `use` or its fixture helper ungated is clean on the developer's machine and a `-D warnings`
   failure on the platforms that skip the test. CI runs the engine on macOS, Ubuntu and Windows

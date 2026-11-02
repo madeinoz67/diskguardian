@@ -4,6 +4,13 @@
 //! scan could not read; `graft` is how they rejoin the main tree. These tests use real
 //! filesystem fixtures, because the claim under test is that tree arithmetic survives
 //! contact with real allocation numbers — a mocked shape would prove nothing.
+//!
+//! Platform-gated tests live in this file, so on another OS some helpers and imports are
+//! legitimately unused. `dead_code` and `unused_imports` are therefore allowed HERE and only
+//! here: they have cost three CI rounds because they cannot be reproduced on the developer's
+//! machine. Production code keeps `-D warnings`. The stricter alternative, once it is worth
+//! the churn, is to move each platform's tests into their own file-level `#![cfg(...)]` module.
+#![allow(dead_code, unused_imports)]
 
 use diskguardian_core::{scan, GraftError, Node, NodeId, NodeKind, ScanOptions, Tree};
 
