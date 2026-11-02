@@ -4,7 +4,7 @@ import { Sunburst } from './sunburst'
 import { assignHues, colorFor } from './layout'
 import type { Arc } from './layout'
 import { formatBytes, formatCount } from './format'
-import type { CleanupItem, SnapshotReport, ViewNode, VolumeInfo } from './types'
+import type { CleanupItem, FavouriteMarks, SnapshotReport, ViewNode, VolumeInfo } from './types'
 import { basename, gaugeFor, toneColor } from './overview'
 import { applyBranch, advance, findChildByName, partialView, startBranches } from './partial'
 import type { PartialBranch } from './partial'
@@ -13,6 +13,8 @@ import { duplicatesModel } from './duplicates'
 import type { DuplicateGroupModel } from './duplicates'
 import { purgeMessage, snapshotsModel } from './snapshots'
 import type { SnapshotsModel } from './snapshots'
+import { favouritesModel, framesInvalidatedByStarToggle } from './favourites'
+import type { FavouriteRowModel } from './favourites'
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id)
@@ -126,6 +128,13 @@ function stopPartial(): void {
 interface Frame {
   nodeId: number | null
   view: ViewNode[]
+  /**
+   * Favourite marks for this level, cached when the frame was entered. `up()` reuses
+   * cached frames and does not re-fetch, so every star toggle must refresh the frames
+   * it touches at toggle time — including the parent level, whose child mark a
+   * heading star changes (`framesInvalidatedByStarToggle` names them).
+   */
+  marks: FavouriteMarks | null
 }
 
 /**
@@ -185,10 +194,13 @@ async function measureRestricted(): Promise<void> {
     // line below would subtract against the wrong baseline.
     if (report.scan_id !== state.scanId) return
     // The backend grafted the measured subtrees and returned a fresh whole-tree view.
-    state.stack = [{ nodeId: null, view: report.view }]
+    const grafted: Frame = { nodeId: null, view: report.view, marks: null }
+    state.stack = [grafted]
     sunburst.setView(report.view)
     renderCrumbs()
     renderLegend()
+    // The fresh frame has no marks yet; fetch them so the stars survive the graft.
+    void refreshFrameMarks(grafted)
     setStatus(adminStatus(Math.max(0, report.bytes - adminBeforeBytes), report.still_restricted))
     hideAdminMeasurement()
   } catch (error) {
@@ -300,7 +312,8 @@ async function scanPath(path: string): Promise<void> {
     stopPartial()
     state.scanId = result.scan_id
     state.rootPath = path
-    state.stack = [{ nodeId: null, view: result.view }]
+    const rootFrame: Frame = { nodeId: null, view: result.view, marks: null }
+    state.stack = [rootFrame]
     state.collectedTotal = 0
     state.collectedCount = 0
     state.collectedIds = []
@@ -309,6 +322,9 @@ async function scanPath(path: string): Promise<void> {
     renderCrumbs()
     renderLegend()
     updateCollector()
+    // Stars for this level arrive after the first paint; the legend re-renders when
+    // they do. A missing star glyph is honest — an unconfirmed one would not be.
+    void refreshFrameMarks(rootFrame)
 
     // Probe the collector IPC straight away: if a multi-argument command is miswired, that
     // is visible now rather than the first time somebody presses +.
@@ -343,7 +359,10 @@ async function scanPath(path: string): Promise<void> {
       // prompt the user has effectively already given.
       const authorised = await bridge.adminAuthorised().catch(() => false)
       if (authorised) {
-        state.stack = [{ nodeId: null, view: result.view }]
+        // Reuse the scan's own frame, not a fresh one: the marks fetch already in
+        // flight writes to this object, and a duplicate here would orphan it and lose
+        // the stars if the measurement is declined.
+        state.stack = [rootFrame]
         void measureRestricted()
       } else {
         offerAdminMeasurement(result.bytes)
@@ -375,11 +394,13 @@ async function scanPath(path: string): Promise<void> {
 async function navigate(nodeId: number): Promise<void> {
   try {
     const view = await bridge.view(state.scanId, nodeId)
-    state.stack.push({ nodeId, view })
+    const frame: Frame = { nodeId, view, marks: null }
+    state.stack.push(frame)
     sunburst.setView(view)
     renderCrumbs()
     renderLegend()
     updateHoverLabel(null)
+    void refreshFrameMarks(frame)
   } catch (error) {
     setStatus(`Could not open that item: ${String(error)}`)
   }
@@ -461,13 +482,32 @@ function renderLegend(): void {
   const hues = assignHues(view)
   const heading = document.createElement('div')
   heading.className = 'legend-heading'
-  heading.innerHTML = `<span>${root.name}</span><strong>${formatBytes(root.bytes)}</strong>`
+  // textContent, never innerHTML: `root.name` is a disk-derived string, and a folder
+  // named to look like markup is data, not HTML. This block previously interpolated the
+  // name straight into `innerHTML` — a pre-existing defect folded here because the
+  // heading had to be rebuilt anyway to host the star.
+  const headingName = document.createElement('span')
+  headingName.textContent = root.name
+  const headingSize = document.createElement('strong')
+  headingSize.textContent = formatBytes(root.bytes)
+  heading.append(headingName, headingSize)
+  // The heading star stars the current folder — `frame.nodeId ?? null` maps to the
+  // tree root exactly as `view` does, so the scan root itself is starrable.
+  if (state.scanId) {
+    heading.append(favouriteStar(frame.marks?.self_ ?? false, () => void toggleFavourite(frame.nodeId, frame.marks?.self_ ?? false)))
+  }
   legend.append(heading)
 
   const list = document.createElement('div')
   list.className = 'legend-list'
 
   const children = [...root.children].sort((a, b) => (view[b]?.bytes ?? 0) - (view[a]?.bytes ?? 0))
+
+  // Which children are favourites, by node id — resolved on the Rust side, where the
+  // paths are. Rendered only for directory rows: never files, symlinks, restricted
+  // petals, aggregates, or the measuring placeholders of the progressive paint (all of
+  // which either carry no node id or are not folders).
+  const childMarks = new Set(frame.marks?.children ?? [])
 
   // Say the purple petals out loud: the map shows them, but a count with the reason is what
   // tells the user whether an administrator pass or Full Disk Access would help.
@@ -544,6 +584,15 @@ function renderLegend(): void {
       })
     }
 
+    if (node.node_id !== null && node.kind === 'dir') {
+      const nodeId = node.node_id
+      row.append(
+        favouriteStar(childMarks.has(nodeId), () =>
+          void toggleFavourite(nodeId, childMarks.has(nodeId)),
+        ),
+      )
+    }
+
     list.append(row)
   }
 
@@ -565,6 +614,71 @@ async function toggleCollect(nodeId: number, add: boolean): Promise<boolean> {
   } catch (error) {
     showError(`Could not update the collector: ${String(error)}`)
     return false
+  }
+}
+
+// ─── favourites ──────────────────────────────────────────────────────────────────────
+//
+// The star lives in the legend: a glyph beside the collect button on directory rows,
+// and one in the heading for the current folder. No modal, no new top-bar row. The
+// click never navigates — `stopPropagation` against the row's drill-in, exactly as the
+// collect button does.
+
+/** The star glyph button, shared by the heading and the rows. */
+function favouriteStar(marked: boolean, onToggle: () => void): HTMLButtonElement {
+  const star = document.createElement('button')
+  star.type = 'button'
+  star.className = marked ? 'favourite on' : 'favourite'
+  star.textContent = marked ? '★' : '☆'
+  star.title = marked ? 'Remove from favourites' : 'Add to favourites'
+  star.addEventListener('click', (event) => {
+    event.stopPropagation()
+    onToggle()
+  })
+  return star
+}
+
+/**
+ * Star or unstar a node of the current scan. The response is the path list, not marks,
+ * so the affected frames' marks are re-queried afterwards rather than patched locally —
+ * the store's keys are canonical spellings the frontend cannot reconstruct, and a
+ * self-computed star that disagreed with the store would be worse than one extra call.
+ * A heading star touches two levels (its own and the parent whose child mark it
+ * changes); `up()` re-renders the parent from cache, so both are refreshed here.
+ */
+async function toggleFavourite(nodeId: number | null, marked: boolean): Promise<void> {
+  if (!state.scanId) return
+  try {
+    await bridge.favouriteNode(state.scanId, nodeId, !marked)
+    const stale = framesInvalidatedByStarToggle(
+      state.stack.map((frame) => frame.nodeId),
+      nodeId,
+    )
+    await Promise.all(
+      stale
+        .map((index) => state.stack[index])
+        .filter((frame): frame is Frame => frame !== undefined)
+        .map((frame) => refreshFrameMarks(frame)),
+    )
+  } catch (error) {
+    // A broken control must not look like a working one (the C18 lesson).
+    showError(`Could not update favourites: ${String(error)}`)
+  }
+}
+
+/**
+ * Fetch marks for one frame and cache them on it. A stale answer may still land on a
+ * superseded frame — that is harmless, it is a cache entry nobody reads any more — but
+ * it must not repaint a screen that has moved on, so only the top frame re-renders.
+ */
+async function refreshFrameMarks(frame: Frame): Promise<void> {
+  if (!state.scanId) return
+  try {
+    const marks = await bridge.favouriteMarks(state.scanId, frame.nodeId)
+    frame.marks = marks
+    if (frame === state.stack[state.stack.length - 1]) renderLegend()
+  } catch (error) {
+    showError(`Could not read favourite marks: ${String(error)}`)
   }
 }
 
@@ -599,7 +713,16 @@ function updateHoverLabel(arc: Arc | null): void {
         : node.kind === 'file'
           ? 'file'
           : 'folder'
-  hoverLabel.innerHTML = `<strong>${node.name}</strong><span>${formatBytes(node.bytes)} · ${kind}</span>`
+  // textContent, never markup: `node.name` is a disk-derived string, and a folder
+  // named to look like HTML is data, not a document. This label previously built its
+  // content with an HTML template string — a pre-existing defect, folded here because
+  // the R8 increment's heading fix claimed this class for the file while this sibling
+  // still shipped it, with `csp: null` in tauri.conf.json leaving nothing to catch it.
+  const labelName = document.createElement('strong')
+  labelName.textContent = node.name
+  const labelDetail = document.createElement('span')
+  labelDetail.textContent = `${formatBytes(node.bytes)} · ${kind}`
+  hoverLabel.replaceChildren(labelName, labelDetail)
   hoverLabel.title = node.name
 }
 
@@ -852,6 +975,26 @@ async function showOverview(): Promise<void> {
 
   volumeList.replaceChildren()
 
+  // Favourites first, above every other row — the folders the user chose outrank the
+  // ones the system mounted. A favourite that is missing stays here as visible text
+  // with its Scan disabled; unstarring is the way to clear it.
+  try {
+    const model = favouritesModel(await bridge.favourites())
+    if (model.notice !== null) {
+      const note = document.createElement('div')
+      note.className = 'favourites-notice'
+      note.textContent = model.notice
+      volumeList.append(note)
+    }
+    for (const row of model.rows) {
+      volumeList.append(favouriteOverviewRow(row))
+    }
+  } catch (error) {
+    // Favourites degrade loudly, never silently: an unreadable store is a banner, not
+    // a quietly missing block.
+    showError(`Could not read favourites: ${String(error)}`)
+  }
+
   // The home folder is the most common target after the whole disk, so it gets its own row.
   if (homePath) {
     volumeList.append(
@@ -949,6 +1092,11 @@ interface VolumeRowOptions {
   actionLabel?: string
   actionTone?: string
   onAction?: () => void
+  /** Disables the action button, with `disabledTitle` naming why in its tooltip. */
+  disabled?: boolean
+  disabledTitle?: string
+  /** Renders the unstar control beside the action button when present. */
+  onUnstar?: () => void
 }
 
 function volumeRow(options: VolumeRowOptions): HTMLElement {
@@ -981,13 +1129,54 @@ function volumeRow(options: VolumeRowOptions): HTMLElement {
   scan.className = 'volume-scan'
   scan.textContent = options.actionLabel ?? 'Scan'
   if (options.actionTone) scan.style.background = options.actionTone
+  if (options.disabled) {
+    scan.disabled = true
+    scan.title = options.disabledTitle ?? 'Unavailable'
+  }
   scan.addEventListener('click', () => {
     if (options.onAction) options.onAction()
     else void scanPath(options.mount)
   })
 
-  row.append(left, scan)
+  if (options.onUnstar) {
+    const unstar = document.createElement('button')
+    unstar.type = 'button'
+    unstar.className = 'volume-unstar'
+    unstar.textContent = '★'
+    unstar.title = 'Remove from favourites'
+    unstar.addEventListener('click', options.onUnstar)
+    row.append(left, unstar, scan)
+  } else {
+    row.append(left, scan)
+  }
   return row
+}
+
+/** One favourite folder on the overview: a name, its path (or the missing sentence), a
+ *  working Scan, and an unstar. Never a size — a size would need a walk per render. */
+function favouriteOverviewRow(row: FavouriteRowModel): HTMLElement {
+  return volumeRow({
+    name: row.name,
+    mount: row.path,
+    total_bytes: 0,
+    free_bytes: 0,
+    detail: row.detail,
+    gauge: false,
+    disabled: row.unavailable,
+    disabledTitle:
+      'This folder is not on this disk right now — it may have been deleted, or its volume is not mounted. Unstar it to remove the row.',
+    onUnstar: () => void unstarFavourite(row.path),
+  })
+}
+
+/** The unstar passes the store's own string back verbatim, then re-renders the page. */
+async function unstarFavourite(path: string): Promise<void> {
+  try {
+    await bridge.setFavourite(path, false)
+    await showOverview()
+  } catch (error) {
+    showError(`Could not remove the favourite: ${String(error)}`)
+  }
 }
 
 async function boot(): Promise<void> {

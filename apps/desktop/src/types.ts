@@ -166,3 +166,23 @@ export interface AdminProgress {
   measured: number
   total: number
 }
+
+/** One favourite folder, as the overview shows it. */
+export interface FavouriteEntry {
+  /** The store's own string, passed back verbatim to unstar. */
+  path: string
+  /** False when the folder is gone or its volume is unmounted: kept, never dropped. */
+  exists: boolean
+}
+
+export interface FavouritesReport {
+  favourites: FavouriteEntry[]
+  /** Corrupt-store recovery, shown as visible text. Never a silent empty list. */
+  notice: string | null
+}
+
+/** Whether the viewed node and its children are favourites, resolved by path in Rust. */
+export interface FavouriteMarks {
+  self_: boolean
+  children: number[]
+}

@@ -11,6 +11,8 @@ import type {
   CollectState,
   DeleteReport,
   DuplicateReport,
+  FavouriteMarks,
+  FavouritesReport,
   FreshnessReport,
   CleanupReport,
   EmptyReport,
@@ -209,6 +211,44 @@ export async function onAdminProgress(handler: (p: AdminProgress) => void): Prom
   if (!isTauri) return () => {}
   const unlisten = await listen<AdminProgress>('admin-progress', (event) => handler(event.payload))
   return unlisten
+}
+
+// ─── favourites ──────────────────────────────────────────────────────────────────────
+//
+// The webview never writes favourite state itself: every change goes through these
+// commands, and every path is resolved on the Rust side (by node id from the scan
+// tree, or shape-validated when named directly).
+
+/** Every favourite with an existence stat, plus the corrupt-store notice when set. */
+export async function favourites(): Promise<FavouritesReport> {
+  if (!isTauri) return demoFavourites()
+  return invoke<FavouritesReport>('favourites')
+}
+
+/** Whether the viewed node and its children are favourites. */
+export async function favouriteMarks(
+  scanId: string,
+  nodeId: number | null,
+): Promise<FavouriteMarks> {
+  if (!isTauri) return demoMarks(nodeId)
+  return invoke<FavouriteMarks>('favourite_marks', { scanId, nodeId })
+}
+
+/** Star or unstar a node of a scan; `nodeId: null` is the tree root (the heading star). */
+export async function favouriteNode(
+  scanId: string,
+  nodeId: number | null,
+  add: boolean,
+): Promise<string[]> {
+  if (!isTauri) return demoToggleFavourite(nodeId, add)
+  return invoke<string[]>('favourite_node', { scanId, nodeId, add })
+}
+
+/** Add or remove a favourite by path — the overview's unstar, which passes the store's
+ *  own string back verbatim. */
+export async function setFavourite(path: string, add: boolean): Promise<string[]> {
+  if (!isTauri) return demoSetFavourite(path, add)
+  return invoke<string[]>('set_favourite', { path, add })
 }
 
 // ─── demo data ────────────────────────────────────────────────────────────────────────
@@ -468,5 +508,59 @@ function demoPurge(): PurgeReport {
       'This is the browser demo: there is no tmutil here, so no snapshots were deleted. Run the app for the real answer.',
     freed_bytes: 0,
     remaining: DEMO_SNAPSHOTS.map((snapshot) => ({ ...snapshot })),
+  }
+}
+
+// Synthetic favourites for the browser demo: one entry that "exists" (Downloads is in
+// the demo tree, so the legend star lights for it too) and one that does not. The list
+// lives in memory only — the demo never claims the persistence the real store has.
+const demoFavouritePaths: { path: string; exists: boolean }[] = [
+  { path: '/Users/you/Downloads', exists: true },
+  { path: '/Users/you/Archived 2019', exists: false },
+]
+
+function demoFavourites(): FavouritesReport {
+  return {
+    favourites: demoFavouritePaths.map((entry) => ({ ...entry })),
+    notice: null,
+  }
+}
+
+/** The demo-tree path a node id stands for; `null` is the demo root. */
+function demoNodePath(nodeId: number | null): string {
+  if (nodeId === null) return '/Users/you'
+  const node = demoNodes.find((candidate) => candidate.node_id === nodeId)
+  return node ? `/Users/you/${node.name}` : ''
+}
+
+function demoToggleFavourite(nodeId: number | null, add: boolean): string[] {
+  const path = demoNodePath(nodeId)
+  if (path !== '') {
+    const index = demoFavouritePaths.findIndex((entry) => entry.path === path)
+    if (add && index === -1) demoFavouritePaths.push({ path, exists: true })
+    if (!add && index !== -1) demoFavouritePaths.splice(index, 1)
+  }
+  return demoFavouritePaths.map((entry) => entry.path)
+}
+
+function demoSetFavourite(path: string, add: boolean): string[] {
+  const index = demoFavouritePaths.findIndex((entry) => entry.path === path)
+  if (add && index === -1) demoFavouritePaths.push({ path, exists: true })
+  if (!add && index !== -1) demoFavouritePaths.splice(index, 1)
+  return demoFavouritePaths.map((entry) => entry.path)
+}
+
+function demoMarks(nodeId: number | null): FavouriteMarks {
+  const node = nodeId === null ? demoNodes[0] : demoNodes.find((candidate) => candidate.node_id === nodeId)
+  if (!node) return { self_: false, children: [] }
+  const paths = new Set(demoFavouritePaths.map((entry) => entry.path))
+  return {
+    self_: paths.has(demoNodePath(nodeId)),
+    children: node.children
+      .map((index) => demoNodes[index])
+      .filter((child): child is ViewNode => child !== undefined && child.kind === 'dir')
+      .filter((child) => paths.has(`/Users/you/${child.name}`))
+      .map((child) => child.node_id)
+      .filter((id): id is number => id !== null),
   }
 }

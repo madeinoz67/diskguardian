@@ -230,9 +230,9 @@ body.dragging #sunburst {
 
 .legend-heading {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
   padding: 2px 8px 10px;
   color: var(--muted);
 }
@@ -244,6 +244,7 @@ body.dragging #sunburst {
 }
 
 .legend-heading strong {
+  margin-left: auto;
   color: var(--text);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -257,7 +258,8 @@ body.dragging #sunburst {
 
 .legend-row {
   display: grid;
-  grid-template-columns: 10px 1fr auto auto;
+  /* dot, name, size, then the collect and star glyph buttons */
+  grid-template-columns: 10px 1fr auto auto auto;
   align-items: center;
   gap: 9px;
   padding: 7px 8px;
@@ -312,6 +314,41 @@ body.dragging #sunburst {
 .collect.on {
   color: #ffd60a;
   border-color: rgba(255, 214, 10, 0.5);
+}
+
+/* The favourite star shares the collect button's pattern: a small bordered glyph,
+   amber when on, and never hover-only. */
+.favourite {
+  appearance: none;
+  border: 1px solid var(--separator);
+  background: transparent;
+  color: var(--muted);
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.12s ease;
+}
+
+.legend-row:hover .favourite,
+.favourite.on {
+  opacity: 1;
+}
+
+.favourite.on {
+  color: #ffd60a;
+  border-color: rgba(255, 214, 10, 0.5);
+}
+
+/* Slightly smaller in the heading, where it sits beside the total. */
+.legend-heading .favourite {
+  width: 18px;
+  height: 18px;
+  opacity: 0.7;
+  flex: none;
 }
 
 /* ── collector ────────────────────────────────────────────────────────────────── */
@@ -439,8 +476,9 @@ body.dragging #sunburst {
 
 .volume-row {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 14px;
+  /* left block, optional unstar glyph, action button */
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
   align-items: center;
   padding: 14px 16px;
   border-radius: 12px;
@@ -487,8 +525,46 @@ body.dragging #sunburst {
   cursor: pointer;
 }
 
-.volume-scan:hover {
+.volume-scan:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+
+/* A favourite whose folder is gone keeps its row but cannot offer a scan. */
+.volume-scan:disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.35);
+  cursor: default;
+}
+
+/* The unstar control on a favourite row. Always enabled: unstarring is the way a
+   missing favourite gets cleared. */
+.volume-unstar {
+  appearance: none;
+  border: 1px solid var(--separator);
+  background: transparent;
+  color: #ffd60a;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.volume-unstar:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* A recovered favourites store is a statement, not a footnote: the corrupt list was
+   kept beside the fresh one, and the user should know where. */
+.favourites-notice {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-left: 3px solid rgba(255, 159, 10, 0.7);
+  border-radius: 0 6px 6px 0;
+  background: rgba(255, 159, 10, 0.08);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .overview-footer {
