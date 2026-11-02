@@ -184,3 +184,43 @@ fn an_unknown_scan_is_a_typed_error_not_a_panic() {
         "the error must name the failure"
     );
 }
+
+#[test]
+fn delete_removes_the_node_and_returns_a_smaller_view() {
+    let app = build();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .expect("webview");
+    let (scan_id, root) = seed_scan(&app);
+    let child = child_named(&webview, &scan_id, root, "sub");
+
+    let before = call(&webview, "view", serde_json::json!({ "scanId": scan_id, "nodeId": root }))
+        .expect("view");
+    let before_bytes = before[0]["bytes"].as_u64().unwrap_or(0);
+
+    call(
+        &webview,
+        "collect",
+        serde_json::json!({ "scanId": scan_id, "nodeId": child, "add": true }),
+    )
+    .expect("collect");
+
+    let report = call(
+        &webview,
+        "delete_collected",
+        serde_json::json!({ "scanId": scan_id, "nodeId": root, "permanent": false, "confirmed": true }),
+    )
+    .expect("delete must succeed");
+
+    assert_eq!(report["removed"], 1, "one item removed: {report}");
+    assert_eq!(report["failed"], 0);
+    assert_eq!(report["mode"], "trash");
+
+    let after = report["view"].as_array().expect("view array");
+    assert!(
+        !after.iter().any(|node| node["name"] == "sub"),
+        "the deleted folder must leave the view: {report}"
+    );
+    let after_bytes = report["bytes"].as_u64().unwrap_or(0);
+    assert!(after_bytes < before_bytes, "the total must shrink");
+}

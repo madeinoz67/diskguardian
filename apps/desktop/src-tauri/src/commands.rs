@@ -477,15 +477,14 @@ pub fn delete_collected(
         ));
     }
 
-    let mut sizes: HashMap<PathBuf, u64> = HashMap::new();
-    let mut id_by_path: HashMap<PathBuf, usize> = HashMap::new();
-    let mut paths: Vec<PathBuf> = Vec::with_capacity(order.len());
-    for id in order {
-        let path = scan.tree.path_of(id);
-        sizes.insert(path.clone(), scan.tree.node(id).total_bytes);
-        id_by_path.insert(path.clone(), id);
-        paths.push(path);
-    }
+    // Align outcomes to ids by position, not by path.
+    //
+    // `delete` returns one outcome per path, in the order given, so position is exact.
+    // Matching on the path looked equivalent and was not: `guard` canonicalises, so on
+    // macOS `/var/...` comes back as `/private/var/...`, the lookup missed, nothing was
+    // pruned, and the "freed" figure was the directory's metadata size rather than its
+    // contents.
+    let paths: Vec<PathBuf> = order.iter().map(|&id| scan.tree.path_of(id)).collect();
 
     let refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
     let mode = if permanent {
@@ -495,20 +494,16 @@ pub fn delete_collected(
     };
     let outcome = delete(&refs, &scan.scan_root, mode);
 
-    let freed: u64 = outcome
-        .outcomes
-        .iter()
-        .filter(|o| o.ok)
-        .map(|o| sizes.get(&o.path).copied().unwrap_or(o.bytes))
-        .sum();
+    let mut deleted: Vec<usize> = Vec::new();
+    let mut freed = 0u64;
+    for (&id, result) in order.iter().zip(outcome.outcomes.iter()) {
+        if result.ok {
+            freed = freed.saturating_add(scan.tree.node(id).total_bytes);
+            deleted.push(id);
+        }
+    }
 
     // Prune what actually left the disk, then re-project the view. No rescan.
-    let deleted: Vec<usize> = outcome
-        .outcomes
-        .iter()
-        .filter(|o| o.ok)
-        .filter_map(|o| id_by_path.get(&o.path).copied())
-        .collect();
     scan.tree.forget(&deleted);
     scan.collector.clear();
 

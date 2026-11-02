@@ -130,6 +130,14 @@ verified in the running app, so the claim stays open until it is.
 root concurrently; the honest behaviour is "open on arrival", with no second walk.
 
 ### C17 — Deleting refreshes the flower without re-walking the disk  `[x]`
+
+> **Correction 2026-11-02:** this claim was closed on unit tests of `Tree::forget` alone and
+> was false end to end. `delete_collected` aligned deletion outcomes to node ids by path,
+> and `guard` canonicalises paths (`/var/...` becomes `/private/var/...` on macOS), so the
+> lookup missed, nothing was pruned, and "freed" reported a directory's metadata size. The
+> principal saw it as "delete does nothing". Now aligned by position, and pinned by
+> `delete_removes_the_node_and_returns_a_smaller_view` in `src-tauri/tests/ipc.rs`, which
+> drives the real command on a mock runtime.
 After a delete the backend prunes the deleted nodes from the tree, recomputes every
 ancestor's totals and returns a fresh view, so the petal disappears and the totals shrink
 immediately. The default action moves items to the macOS Trash; holding Option on the Delete

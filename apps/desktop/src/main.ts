@@ -278,7 +278,11 @@ function renderLegend(): void {
 
     const name = document.createElement('span')
     name.className = 'legend-name'
-    name.textContent = node.kind === 'aggregate' ? `${node.name} (${node.aggregated_count})` : node.name
+    const label = node.kind === 'aggregate' ? `${node.name} (${node.aggregated_count})` : node.name
+    name.textContent = label
+    // The column is narrow and names are long: never leave the full name unreachable.
+    name.title = label
+    row.title = label
 
     const size = document.createElement('span')
     size.className = 'legend-size'
@@ -359,6 +363,7 @@ function updateHoverLabel(arc: Arc | null): void {
           ? 'file'
           : 'folder'
   hoverLabel.innerHTML = `<strong>${node.name}</strong><span>${formatBytes(node.bytes)} · ${kind}</span>`
+  hoverLabel.title = node.name
 }
 
 async function onDelete(permanent: boolean): Promise<void> {
