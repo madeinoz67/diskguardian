@@ -482,6 +482,22 @@ In scope eventually, too dim to state as claims today:
 
 ## Log
 
+- 2026-11-02 — Fixed: a new scan showed the previous directory's contents. Reported by the
+  principal. Reproduced on the built app — selecting a new folder left the contents list reading
+  the old tree's rows and totals and the breadcrumb reading the old path for the whole of the
+  next scan, and for ever if that scan failed before its first paint. The canvas was being
+  replaced by the progressive-paint path but `renderLegend()` and `renderCrumbs()` were not, and
+  both read `state.stack`, which still held the previous scan. `beginScan()` now clears the
+  stack, the collector and the breadcrumb before the first `await`, and the breadcrumb keeps its
+  "Disks and folders" escape when there is no trail so a long scan cannot strand the user.
+  Verified by driving the built app: scanning `/Users/seaton/Documents/src` (51.7 GB, 999,187
+  files, 17.3 s) and then switching volume showed an empty contents list and the new path,
+  where the same action previously showed the old directory's 20 rows. **No unit test**: the
+  state lives in `main.ts`, which touches the document at import, so there is no seam — the
+  behaviour is closed by observation, as C8, C13 and C15 were, and that gap is stated rather
+  than papered over. Also banked: `stage-admin.ts` copies the helper from a hard-coded
+  `../../target`, so building a worktree with `CARGO_TARGET_DIR` set fails at the copy step.
+
 - 2026-11-02 — Local snapshots shipped as far as the rules allow (C27, open on appearance).
   A "Local snapshots" row on the overview, a panel listing every APFS local Time Machine
   snapshot with its timestamp and no invented size, and a purge that runs `tmutil` as the user
