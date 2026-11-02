@@ -238,9 +238,10 @@ dialog source and argv remain byte-identical to the fixed template. The helper i
 mechanically pinned as having no delete callsites. **Not closed:** AC2's elevated arm (needs
 sudo, which the builder correctly refused to automate) and AC4 (a manual human run). The
 ship/kill sizing rule therefore has no real-machine number yet.
-**Known gap against the principal's cadence decision:** this slice still prompts once per
-pass. Prompt-per-session needs the helper to outlive a single job, with a parent-death
-watchdog and an idle timeout; that is the next increment, not a shipped property.
+**Cadence gap closed on a branch, not on main:** `r3-session-scanning` (`fd853b1`, rebased)
+implements one prompt per app run, with the three liveness mechanisms and their tests. It is
+green (ipc 16, serve 6, job 10, model 5, scan 18) and unmerged, because merging it would ship
+a privileged behaviour that has not yet run against a real dialog on a real machine.
 
 ## Test Strategy
 
@@ -265,7 +266,10 @@ watchdog and an idle timeout; that is the next increment, not a shipped property
 - **Delete prunes, it does not rescan** (2026-10-30). The first working version re-scanned the whole volume after every delete, which is minutes on a real disk and made the feature feel broken. `Tree::forget` now removes the deleted nodes, recomputes ancestors and re-projects the view, so the flower updates in the same frame.
 - **Trash by default, Option for permanent** (2026-10-30). The button moves to the Trash; holding Option deletes permanently and always confirms. Trash runs over 5 GB also confirm.
 - **Admin scanning is prompt-per-session, not a signed helper** (2026-11-02; cadence set by the
-  principal, 2026-11-02: "one per privileged session"). The first privileged pass raises the
+  principal: "one per privileged session"). Built on branch `r3-session-scanning` (rebased to
+  `fd853b1`), green, not yet merged. The original design's §10 said a resident privileged
+  daemon should not be built before a signing identity exists; the principal's cadence decision
+  overrides that judgement deliberately, and the liveness tests below are the price of it. The first privileged pass raises the
   OS prompt; later passes in the same app run reuse that helper rather than asking again. The
   helper must therefore die with the app and after an idle timeout, since a long-lived root
   process is a wider window than a one-shot: both are pinned by tests.
@@ -273,6 +277,16 @@ watchdog and an idle timeout; that is the next increment, not a shipped property
   macOS 13+, so the signed path is unavailable rather than merely harder. The helper is a
   file-driven binary behind a launcher-agnostic job/results protocol, so a future signed runner
   replaces one module and no protocol.
+- **The resident helper's liveness is three mechanisms, not one** (2026-11-02). A parent-pid
+  watch is impossible because the launcher deliberately backgrounds the helper so the dialog can
+  close, orphaning it to launchd within milliseconds. Instead: an app-owned heartbeat the helper
+  reads every five seconds (exits at thirty stale, which covers a crash), disappearance of the
+  session's staging directory (which the app's exit removes), and a fifteen-minute idle timeout.
+  Each has a test, plus a negative control proving it stays alive while the heartbeat is fresh.
+- **The helper cannot attribute a job cryptographically** (2026-11-02, stated rather than
+  papered over). Same-uid writers in a 0700 staging directory are indistinguishable, so its
+  defences are schema, size and path validation. The worst case in the threat model therefore
+  remains *root measuring into a 0700 directory*, never mutation: the helper has no delete code.
 - **Measurement only runs elevated** (2026-11-02). The privileged helper has no delete call
   sites; deletion stays in the unprivileged app behind the unchanged guard. Visibility of a
   protected path must never become deletability of it, and a test pins that.
