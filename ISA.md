@@ -265,19 +265,27 @@ failure worth remembering. What remains true: AC4 — a manual run against a rea
 machine — is still unverified **on `main`**, and the ship/kill sizing rule still has no
 real-machine number. The one-prompt-per-session behaviour is shipped, and its liveness
 mechanisms are pinned only by tests.
-**AC4 attempt under way (2026-11-02, live, not yet closed).** A real dialog was raised on a
-scan of `/private/var` (7.4 GB, a `protected` restricted petal at 20.9 MB): the app spawned
-`diskguardian-admin --serve` 49 s after launch and macOS presented "osascript wants to make
-changes". The claim stays open until the credential is supplied and the graft is observed —
-the principal supplies it, because automating a password prompt is not something this project
-will do.
-**Anomaly observed during that attempt, not yet a confirmed defect.** The measurement started
-itself: the only click was Scan, and the auto-measure branch fires on
-`admin_authorised() == true`, which on a fresh launch ought to be false. The suspicion is that
-the check reads a persisted record rather than a live session, which would mean the app can
-raise a root-consent dialog without the user asking for one. To be investigated with the
-gate passed; recorded here rather than in a chat message because it is the kind of thing that
-gets lost between sessions.
+**AC4 — CLOSED 2026-11-02, against a real dialog on this machine.** The principal supplied the
+credential to a genuine macOS consent prompt ("osascript wants to make changes"); automating
+that is not something this project will ever do, which is why the claim needed a human. What
+followed: `diskguardian-admin --serve` answered `{"completed": 452, "exit": 0,
+"deadline_hit": false}` — every restricted root measured, none abandoned — and the app grafted
+the results into the tree before the user's eyes. `/private/var` went from **7.4 GB to 11.2 GB**
+in the same session, with `root` (645 MB), `dirs_cleaner` (2.2 GB), `vm` (2 GB) and `networkd`
+appearing where unreadable petals had been. `protected` (20.9 MB) stayed restricted, exactly as
+this claim's honest limit predicts: root does not bypass TCC.
+**The ship/kill sizing rule now has its number.** Recovered space on a real volume, one pass, one
+human approval: **+3.8 GB**, against a ≥1 GB ship threshold. Ship.
+**AC2's elevated arm is still open** — the 1%-of-`sudo du -sk` corroboration needs a `sudo` run
+this session did not take, and the RED control (the same pipeline unprivileged recovering exactly
+zero) is covered by the IPC suite rather than by a live run.
+**Anomaly, recorded and still unresolved — with one hypothesis now refuted.** The pass began
+without the "Measure restricted areas…" button being pressed; the only click was Scan. The first
+suspicion was that `admin_authorised()` reads a record persisted from an earlier run. Reading the
+code refutes it: it consults `state.admin_session` in memory, which is `None` on a fresh launch.
+So the mechanism is something else — a mis-routed click after the layout changed, or a second
+trigger inside the scan-completion path — and it stays open rather than being written off. The
+user-visible risk if real: the app can raise a root-consent dialog nobody asked for.
 
 ### C24 — Duplicate groups are content-identical, never a space promise  `[x]`
 A duplicate pass over a finished scan (never during one) groups only files whose whole-file
