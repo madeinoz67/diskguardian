@@ -547,6 +547,15 @@ In scope eventually, too dim to state as claims today:
 
 ## Log
 
+- 2026-11-02 — Cancellation verified end to end on the merged bundle. A volume scan running,
+  then the fixture selected behind it: the fixture completed in **0.1 s** and owned the screen.
+  The same sequence before this work left a 12 MB scan still measuring at 75 seconds. Also
+  recorded from the same run: scanning `/` raises a macOS **network-volume consent** dialog,
+  because the walk enters mounted shares. Denying it leaves the app working and reports the
+  share's contents as unavailable — which is the right behaviour, but it means a whole-volume
+  scan interrupts the user with a permission prompt the product never explains. Not a defect
+  in this diff; noted because it is the first thing a new user will hit.
+
 - 2026-11-02 — Review found what the gates could not. Three lanes (code review, refutation,
   mechanism critique) ran against the day's fixes and produced sixteen findings, six of them
   MEDIUM or blocking. The pattern worth keeping: **every one that mattered was found by reading
