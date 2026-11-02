@@ -263,7 +263,11 @@ pub async fn scan_restricted<R: tauri::Runtime>(
         }
         let session_dir = session.path().to_path_buf();
 
-        if !session.daemon_started {
+        if session.daemon_started {
+            // The whole point of the cadence: a second pass in this app run must not ask.
+            log_session("reused");
+        } else {
+            log_session("dialog raised");
             let injected: Option<Launch> = state
                 .admin_launch
                 .lock()
@@ -310,6 +314,7 @@ pub async fn scan_restricted<R: tauri::Runtime>(
             // Only reached on a successful start: the dialog is spent, the daemon is
             // up, and later passes must not spend another.
             session.daemon_started = true;
+            log_session("approved");
         }
         (session_dir, stem)
     };
@@ -444,6 +449,32 @@ fn resolve_helper() -> Option<PathBuf> {
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(HELPER_NAME)))
         .filter(|path| path.exists())
+}
+
+/// Append one line describing a privileged pass. The one-prompt-per-session property is
+/// otherwise only observable by watching the screen, which means it cannot be checked after
+/// the fact by anyone who was not looking.
+pub fn log_session(event: &str) {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let dir = PathBuf::from(home).join("Library/Logs/DiskGuardian");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let line = format!("{stamp}\t{event}\n");
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("admin-session.log"))
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
 }
 
 fn wait_for_ready(dir: &Path, bound: Duration) -> bool {
