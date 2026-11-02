@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 21/27
+progress: 22/27
 iteration: 1
 created: 2026-10-30
 ---
@@ -100,9 +100,21 @@ The default action moves collected items to the macOS Trash, and a file deleted 
 `bun run tauri:build` produces `DiskGuardian.app`, launching it scans a volume (the home directory by default; `DISKGUARDIAN_ROOT` overrides) and shows a non-empty flower, verified by a screenshot whose pixels are inspected.
 **Falsifier:** no app bundle, blank window, or absent petals.
 
-### C13 — Scanning does not freeze the window  `[ ]`
-While a scan of the home volume runs, the window still paints and the UI reports progress; a second scan of another path can be started concurrently.
+### C13 — Scanning does not freeze the window  `[x]`
+While a scan runs, the window still paints, the UI reports progress, and clicks land. A scan of
+another path *may* be started; the newest scan owns the screen and the older one finishes unseen.
 **Falsifier:** window beachballs or progress stops updating during the scan.
+**Verified 2026-11-02 on the built app**, twice (a 17-second scan of a million-file tree and a
+volume scan): the progress counter climbed (`Measuring… 9 of 21 done`), petals grew while it
+ran, and clicks were accepted mid-scan — including the breadcrumb that starts a second scan.
+**Narrowed, and the narrowing is the finding.** This claim used to assert that "a second scan of
+another path can be started concurrently", as though that were a feature. It is not: measured
+against a running volume scan, a 12 MB scan started behind it had still not completed 75 seconds
+later, because both walks compete for one rayon pool and there is no cancellation path through
+the IPC. The scan token stops the two from corrupting each other's view, which is what the
+screenshot before the fix showed — one scan's breadcrumb over another's totals and a white petal,
+wedged for ever. Serving two scans fairly is a different piece of work, now on the roadmap as
+R13 rather than implied by this claim.
 
 ### C14 — A million-node tree scans near the filesystem's own floor  `[x]`
 A scan of a ≥1M-node developer tree completes in **no more than 1.15× the wall clock of
@@ -493,6 +505,13 @@ increment opens.
 - **R10 — Real-time gauges**, Option folds purgeable into the bar.
 - **R11 — Lower**: cloud accounts, parallel multi-disk scanning, disk images, network
   volumes, Forget scan results.
+- **R14 — Concurrent scans are served fairly, or refused** (opened 2026-11-02 from C13's
+  narrowing). Today a scan started behind a large one does not complete until the large one
+  does: both walks submit to one rayon pool and nothing cancels the superseded one. Two honest
+  shapes, and the cheaper one is probably right — either refuse to start a scan while one is in
+  flight and say so on the button, or give each scan its own pool and add a cancel path through
+  the IPC so a superseded walk stops instead of finishing invisibly. Until one lands, the UI
+  should not offer a control whose outcome is "nothing happens yet".
 
 ## Not yet specified
 
@@ -507,6 +526,21 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-02 — C13 closed and narrowed; C8 closed. Driving the built app verified both
+  directions of navigation (petal re-roots, centre restores exactly) and showed that a scan
+  never freezes the window — progress climbed, petals grew, clicks landed mid-scan. What it
+  also showed is that a second scan started behind a large one does not get served: 75 seconds
+  in, a 12 MB scan was still measuring while a volume scan ran. So the claim no longer asserts
+  concurrent scans as a feature; the token keeps them from corrupting each other's view, and
+  fair scheduling became R14.
+
+- 2026-11-02 — Fixed: two scans merged into one view. Starting a second scan while one ran
+  produced one scan's breadcrumb over another's totals, a white petal, and a permanent wedge at
+  a progress count that never advanced. Every scan start now takes a token: a stale-token scan
+  drops its branch reports and its result without touching the stage, and skips `stopPartial` so
+  it cannot clear the newer scan's measuring petals. Verified by repeating the sequence on the
+  merged bundle — the mixed state is gone; the older walk still finishes unseen, which is R14.
 
 - 2026-11-02 — Fixed: a new scan showed the previous directory's contents. Reported by the
   principal. Reproduced on the built app — selecting a new folder left the contents list reading
