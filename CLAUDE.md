@@ -44,7 +44,10 @@ cd apps/desktop && bun run tauri:build   # the bundle
   whether the guard or the fixture is wrong, and say which in the commit message.
 - **Never make the UI right by changing the engine's arithmetic.** The engine is the truth;
   the view is a projection.
-- **Work on a branch, not `main`.**
+- **Merge to `main` while the project is pre-rules** (principal, 2026-11-02: "we are still in
+  early development so merge to main is ok until i enable rules in the repo"). Feature work may
+  still go on a branch for isolation, but a green branch merging straight back is the default.
+  When branch protection or a PR gate is turned on, this line changes first, not after.
 - **No "should work".** Engine claims close on `cargo test` output; appearance claims close
   on a screenshot whose pixels someone looked at.
 - **Branch-scoped edits.** If a second session is working an area, do not rewrite the same
