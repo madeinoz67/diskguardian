@@ -606,6 +606,25 @@ In scope eventually, too dim to state as claims today:
 
 ## Log
 
+- 2026-11-02 — Favourite folders shipped (C28), and the first increment run end to end under the
+  new `increment` skill. What landed: a Rust-owned JSON store in the app data directory, star from a
+  directory row or the current folder's heading, favourites on the front page above every other row
+  with Scan and unstar, and a vanished favourite that stays visible saying so instead of disappearing.
+  Verified on the built app — block above every row, star click not moving the view, survival across a
+  real quit and relaunch as `/private/tmp/...` from a `/tmp` scan, and a hidden folder rendering "not
+  on this disk right now" with Scan disabled (`/tmp/dg-r8-overview.png`, `/tmp/dg-r8-legend.png`,
+  `/tmp/dg-r8-missing2.png`, `/tmp/dg-r8-final.png`); plus 18 favourites IPC tests, three
+  discriminations RED-checked by hand, and 105 Rust / 56 frontend tests green.
+  **What it cost, recorded because it is the useful part.** Four review passes. The first build
+  passed every gate and all three pre-committed discriminations and still shipped a legend unstar
+  that silently did nothing. The second pass found it; the third found the repair held only while the
+  folder existed — this increment's own headline case — and that re-starring then produced the
+  duplicate row C28 lists as its falsifier. Two regression tests were green with the defect live
+  because their fixtures kept the folder alive. The fix that ended it is one canonicalisation
+  chokepoint that the writer, comparator, remover and load-time reconcile all call.
+  **Left open by decision:** `tauri.conf.json` still ships `csp: null` (the hover-label injection is
+  fixed; CSP hardening is its own call), and a case-only path difference can still yield a second row.
+
 - 2026-11-02 — Cancellation verified end to end on the merged bundle. A volume scan running,
   then the fixture selected behind it: the fixture completed in **0.1 s** and owned the screen.
   The same sequence before this work left a 12 MB scan still measuring at 75 seconds. Also
