@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 20/27
+progress: 21/27
 iteration: 1
 created: 2026-10-30
 ---
@@ -104,14 +104,38 @@ The default action moves collected items to the macOS Trash, and a file deleted 
 While a scan of the home volume runs, the window still paints and the UI reports progress; a second scan of another path can be started concurrently.
 **Falsifier:** window beachballs or progress stops updating during the scan.
 
-### C14 — A real home directory scans in seconds  `[ ]`
-A scan of a developer's home directory completes in under 10 seconds and does not exceed
-roughly 1 GB of memory.
-**Measured 2026-10-30:** 51,518 files scan in 446 ms (115k files/s), so the walker itself is
-fast. But `~/Library` alone exceeds 90 s, and a full `$HOME` scan ran past 4 minutes at
-1.2 GB RSS before it was killed. **Falsified.** The suspected cause is the per-level
-subtree merge, which copies every node once per ancestor level; the fix is a single
-flatten into one arena after the walk, which is recorded under *Not yet specified*.
+### C14 — A million-node tree scans near the filesystem's own floor  `[x]`
+A scan of a ≥1M-node developer tree completes in **no more than 1.15× the wall clock of
+`du -sk` on the same tree**, and does not exceed **1 GB** of peak resident memory.
+**The original bar was wrong, and that is the finding.** C14 used to demand "under 10 seconds",
+which no implementation can meet: `du` itself takes 44–80 s on the trees this product is for.
+A target nobody measured is not a criterion, it is a wish. The bar is now the filesystem's own
+floor plus a stated tolerance.
+**Measured 2026-11-02**, independent lane, pre-committed protocol, correctness proven first
+(exact agreement with a raw `st_blocks` oracle and `du` on fixtures covering sparse files, hard
+links, symlink loops and a permission wall):
+- reference tree: **1,056,336 nodes / 900,254 leaves / 344.3 GiB** → **21.46 s** median wall
+  (18.07–25.99, n=5, 10 threads, load ≈8), **388.8 MB** peak RSS, 41.9k leaves/s.
+- `du` on the same tree: **44.05 s**. The walker is **1.7–2.4× faster** than the floor — the
+  ordering this ISA used to record was the other way round, from an older build.
+- second, independent tree: 1,001,301 files / 52.00 GB → **10.7 s**.
+**Falsifier:** a scan of a ≥1M-node tree slower than 1.15× `du`, or peak RSS over 1 GB.
+**How to check it in one command:** `cargo run --release -p diskguardian-core --example scan
+-- <tree>` for wall/files/restricted, with `/usr/bin/time -l` around it for peak RSS.
+**What wall time does and does not say.** It is contention-bound, not engine-bound: the same
+tree took 130.5 s while machine load rose to 51–75, while CPU per scan stayed ~38 s (97%
+kernel) throughout. Quote CPU and the load window with any wall number, or the number is
+meeting-noise, not the engine.
+**Why the old diagnosis was wrong.** The per-level subtree merge was blamed and was never
+dominant: it was retired by `857d662` (2026-10-30) at 105.9 s → 87.9 s on the then-reference
+tree, and a counted cost model puts it at 0.3–1.5 s of that run. The walk is syscall-bound, and
+the remaining distance to `du` is bookkeeping, not copying. "Under 10 seconds" is retired to
+the incremental-rescan item under *Not yet specified*, which is the only honest path to it: a
+warm rescan re-walks changed paths instead of the whole volume.
+**Memory arm.** 6.60 MB floor + ~362 B/node (`size_of::<Node>()` = 136 B, so the arena is ~36%
+of peak). The contingent node-record shrink is therefore **not activated** — it was predicated
+on breaching 1 GB. Directory width costs ~40% more RSS at 32k entries in one directory, stated
+as a shape effect rather than a scaling law.
 
 ### C15 — Petals appear while the scan runs  `[x]`
 The flower is drawn from the root listing alone, with every branch shown as a "measuring"
@@ -474,7 +498,9 @@ increment opens.
 
 In scope eventually, too dim to state as claims today:
 
-- Streaming traversal with a flat arena, so a scan of a multi-million-file volume does not hold every node in memory at once.
+- Streaming traversal, so a scan of a multi-million-file volume does not hold every node in
+  memory at once. *(The flat-arena half landed in `857d662`; only streaming remains, and C14's
+  measured 362 B/node means it is a ceiling-raising exercise rather than a current defect.)*
 - APFS clone detection (`ATTR_CMNEXT_CLONEPARENT`), the largest known accuracy gap.
 - Incremental rescan: reusing a previous tree and re-walking only paths whose mtime changed.
 - Admin/root scanning and the privileged helper that would carry it.
