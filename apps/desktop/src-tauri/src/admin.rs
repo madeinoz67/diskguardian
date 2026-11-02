@@ -148,7 +148,8 @@ pub async fn scan_restricted<R: tauri::Runtime>(
 
     // 2. The job: a fresh per-user temp directory, contents private to this user.
     //    Disk-derived names live here, as JSON, and nowhere else.
-    let job_dir = tempfile::tempdir().map_err(|e| format!("could not create a job directory: {e}"))?;
+    let job_dir =
+        tempfile::tempdir().map_err(|e| format!("could not create a job directory: {e}"))?;
     let job_path = job_dir.path().join("job.json");
     let paths: Vec<String> = expected.iter().map(|(_, p)| p.clone()).collect();
     std::fs::write(&job_path, job_document(&paths, DEADLINE_SECS))
@@ -181,15 +182,13 @@ pub async fn scan_restricted<R: tauri::Runtime>(
     // 4. Run it off the UI thread, exactly like `scan` does (A4).
     let launch_job = job_path.clone();
     let launch_helper = helper.clone();
-    let handle = tauri::async_runtime::spawn_blocking(move || {
-        match injected {
-            Some(launch) => launch(&launch_job, &launch_helper),
-            None => run_with_dialog(
-                &launch_helper,
-                &launch_job,
-                Duration::from_secs(DEADLINE_SECS + OUTER_GRACE_SECS),
-            ),
-        }
+    let handle = tauri::async_runtime::spawn_blocking(move || match injected {
+        Some(launch) => launch(&launch_job, &launch_helper),
+        None => run_with_dialog(
+            &launch_helper,
+            &launch_job,
+            Duration::from_secs(DEADLINE_SECS + OUTER_GRACE_SECS),
+        ),
     });
 
     // Status-line progress while the pass runs: count completed lines in the results
@@ -305,7 +304,8 @@ fn resolve_helper() -> Option<PathBuf> {
 /// Lines of the results file, skipping any that do not parse: a tampered file is an
 /// integrity problem, not a reason to lose the whole pass.
 fn read_results(job_path: &Path) -> Vec<ResultLine> {
-    let Ok(text) = std::fs::read_to_string(job_path.parent().expect("job dir").join("results.jsonl"))
+    let Ok(text) =
+        std::fs::read_to_string(job_path.parent().expect("job dir").join("results.jsonl"))
     else {
         return Vec::new();
     };
@@ -316,7 +316,8 @@ fn read_results(job_path: &Path) -> Vec<ResultLine> {
 }
 
 fn count_results(job_path: &Path) -> u32 {
-    let Ok(text) = std::fs::read_to_string(job_path.parent().expect("job dir").join("results.jsonl"))
+    let Ok(text) =
+        std::fs::read_to_string(job_path.parent().expect("job dir").join("results.jsonl"))
     else {
         return 0;
     };

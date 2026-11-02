@@ -20,7 +20,11 @@ fn options() -> ScanOptions {
 /// accounts for its own bytes.
 fn assert_tree_arithmetic(tree: &Tree) {
     for (i, node) in tree.nodes.iter().enumerate() {
-        let child_sum: u64 = node.children.iter().map(|&c| tree.nodes[c].total_bytes).sum();
+        let child_sum: u64 = node
+            .children
+            .iter()
+            .map(|&c| tree.nodes[c].total_bytes)
+            .sum();
         assert!(
             node.total_bytes >= child_sum,
             "node {i} ({}) total {} < children {child_sum}",
@@ -59,8 +63,11 @@ fn make_locked(base: &Path, name: &str, files: usize) -> PathBuf {
     let dir = base.join(name);
     fs::create_dir(&dir).expect("mkdir");
     for i in 0..files {
-        fs::write(dir.join(format!("payload-{i:03}.bin")), vec![7u8; 64 * 1024])
-            .expect("write");
+        fs::write(
+            dir.join(format!("payload-{i:03}.bin")),
+            vec![7u8; 64 * 1024],
+        )
+        .expect("write");
     }
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).expect("chmod");
     dir
@@ -76,8 +83,11 @@ fn unlock(path: &Path) {
 fn readable_twin(files: usize) -> Tree {
     let dir = tempfile::tempdir().expect("tempdir");
     for i in 0..files {
-        fs::write(dir.path().join(format!("payload-{i:03}.bin")), vec![7u8; 64 * 1024])
-            .expect("write");
+        fs::write(
+            dir.path().join(format!("payload-{i:03}.bin")),
+            vec![7u8; 64 * 1024],
+        )
+        .expect("write");
     }
     scan(dir.path(), &options()).expect("scan twin")
 }
@@ -125,7 +135,11 @@ fn graft_replaces_a_restricted_node_and_preserves_arithmetic() {
     let node = &tree.nodes[locked_id];
     assert_eq!(node.kind, NodeKind::Directory, "the petal is measured now");
     assert!(node.note.is_none(), "no stale permission note");
-    assert_eq!(node.children.len(), 128, "the twin's children were spliced in");
+    assert_eq!(
+        node.children.len(),
+        128,
+        "the twin's children were spliced in"
+    );
 
     let delta = tree.total_bytes() - pre_total;
     assert!(

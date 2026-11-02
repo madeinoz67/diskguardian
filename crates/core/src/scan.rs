@@ -192,7 +192,10 @@ impl Builder {
     fn walk_dir(&self, path: &Path, name: String, depth: usize) -> Scanned {
         // The budget is checked before the directory is opened, so a spent deadline
         // costs no syscalls and produces the same Restricted shape as a refusal.
-        if self.deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
             self.errors.fetch_add(1, Ordering::Relaxed);
             return restricted(name, path, DEADLINE_NOTE.to_string());
         }

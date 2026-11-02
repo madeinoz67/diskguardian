@@ -10,7 +10,8 @@
     "test": "bun test",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "stage:admin": "bun run scripts/stage-admin.ts",
+    "tauri:build": "bun run stage:admin && tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

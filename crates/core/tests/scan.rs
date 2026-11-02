@@ -4,7 +4,9 @@
 //! the filesystem's own accounting: `len()` versus `st_blocks`, inodes behind hard links,
 //! permission bits. A mocked tree would prove nothing.
 
-use diskguardian_core::{build_view, scan, Collector, DeleteMode, NodeKind, ScanOptions, ViewOptions};
+use diskguardian_core::{
+    build_view, scan, Collector, DeleteMode, NodeKind, ScanOptions, ViewOptions,
+};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -17,7 +19,11 @@ fn options() -> ScanOptions {
 /// Assert the tree's own arithmetic: no node sums smaller than its children.
 fn assert_tree_arithmetic(tree: &diskguardian_core::Tree) {
     for (i, node) in tree.nodes.iter().enumerate() {
-        let child_sum: u64 = node.children.iter().map(|&c| tree.nodes[c].total_bytes).sum();
+        let child_sum: u64 = node
+            .children
+            .iter()
+            .map(|&c| tree.nodes[c].total_bytes)
+            .sum();
         assert!(
             node.total_bytes >= child_sum,
             "node {i} ({}) total {} < children {child_sum}",
@@ -184,7 +190,10 @@ fn an_expired_deadline_reports_restricted_nodes_never_zero() {
     // Every directory, the root included, becomes a Restricted node with the same
     // shape as a permission failure: reported, never silently dropped (A3).
     assert_eq!(tree.nodes[tree.root].kind, NodeKind::Restricted);
-    assert!(tree.nodes[tree.root].partial, "a deadline-hit node is partial");
+    assert!(
+        tree.nodes[tree.root].partial,
+        "a deadline-hit node is partial"
+    );
     assert_eq!(
         tree.nodes[tree.root].note.as_deref(),
         Some("deadline reached"),
@@ -255,7 +264,11 @@ fn collector_counts_overlapping_items_once() {
     fs::write(sub.join("big.bin"), vec![1u8; 2 << 20]).expect("write");
 
     let tree = scan(dir.path(), &options()).expect("scan");
-    let sub_id = tree.nodes.iter().position(|n| n.name == "sub").expect("sub");
+    let sub_id = tree
+        .nodes
+        .iter()
+        .position(|n| n.name == "sub")
+        .expect("sub");
     let file_id = tree
         .nodes
         .iter()
@@ -365,7 +378,11 @@ fn deletion_guard_refuses_protected_locations() {
 fn deletion_guard_stays_narrow_enough_to_be_useful() {
     // A cleaner that refuses the temp directory and the Homebrew cache cannot do its job.
     let scan_root = Path::new("/Users");
-    for allowed in ["/usr/local/Cellar", "/private/tmp", "/Applications/Slack.app"] {
+    for allowed in [
+        "/usr/local/Cellar",
+        "/private/tmp",
+        "/Applications/Slack.app",
+    ] {
         assert!(
             diskguardian_core::delete::guard(Path::new(allowed), scan_root).is_ok(),
             "{allowed} must remain deletable"
@@ -379,15 +396,15 @@ fn deletion_moves_to_trash_by_default() {
     let victim = dir.path().join("collect-me.txt");
     fs::write(&victim, b"delete me").expect("write");
 
-    let report = diskguardian_core::delete::delete(
-        &[victim.as_path()],
-        dir.path(),
-        DeleteMode::Trash,
-    );
+    let report =
+        diskguardian_core::delete::delete(&[victim.as_path()], dir.path(), DeleteMode::Trash);
 
     assert_eq!(report.removed, 1, "report: {report:?}");
     assert_eq!(report.failed, 0);
-    assert!(!victim.exists(), "the item must leave its original location");
+    assert!(
+        !victim.exists(),
+        "the item must leave its original location"
+    );
 
     // Where the item lands is the platform's business; that it left its original place and
     // is recoverable is the claim. macOS is the only place we can name the location.
@@ -428,7 +445,11 @@ fn marking_a_node_missing_zeroes_it_and_updates_every_ancestor() {
         .position(|n| n.name == "payload.bin")
         .expect("payload");
     let payload_bytes = tree.nodes[payload].total_bytes;
-    let sub_id = tree.nodes.iter().position(|n| n.name == "sub").expect("sub");
+    let sub_id = tree
+        .nodes
+        .iter()
+        .position(|n| n.name == "sub")
+        .expect("sub");
 
     tree.mark_missing(&[payload]);
 
@@ -442,8 +463,7 @@ fn marking_a_node_missing_zeroes_it_and_updates_every_ancestor() {
         "a missing node is worth nothing"
     );
     assert_eq!(
-        tree.nodes[sub_id].total_bytes,
-        tree.nodes[sub_id].own_bytes,
+        tree.nodes[sub_id].total_bytes, tree.nodes[sub_id].own_bytes,
         "the directory keeps only its own blocks"
     );
     assert_eq!(
@@ -462,7 +482,11 @@ fn marking_the_scan_root_missing_is_refused() {
     let mut tree = scan(dir.path(), &options()).expect("scan");
     let before = tree.total_bytes();
     tree.mark_missing(&[tree.root]);
-    assert_eq!(tree.total_bytes(), before, "the root cannot be marked missing");
+    assert_eq!(
+        tree.total_bytes(),
+        before,
+        "the root cannot be marked missing"
+    );
 }
 
 #[test]
@@ -476,8 +500,16 @@ fn confirmation_is_required_for_top_level_folders_whatever_their_size() {
     fs::write(nested.join("x.bin"), b"x").expect("write");
 
     let tree = scan(dir.path(), &options()).expect("scan");
-    let top_id = tree.nodes.iter().position(|n| n.name == "Desktop").expect("top");
-    let nested_id = tree.nodes.iter().position(|n| n.name == "cache").expect("nested");
+    let top_id = tree
+        .nodes
+        .iter()
+        .position(|n| n.name == "Desktop")
+        .expect("top");
+    let nested_id = tree
+        .nodes
+        .iter()
+        .position(|n| n.name == "cache")
+        .expect("nested");
 
     // A small top-level folder still asks: it is a whole directory of the user's life.
     assert!(

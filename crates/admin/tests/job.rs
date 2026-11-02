@@ -58,8 +58,11 @@ fn status(job_path: &Path) -> serde_json::Value {
 fn fixture_readme(files: usize) -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     for i in 0..files {
-        fs::write(dir.path().join(format!("payload-{i:03}.bin")), vec![7u8; 64 * 1024])
-            .expect("write");
+        fs::write(
+            dir.path().join(format!("payload-{i:03}.bin")),
+            vec![7u8; 64 * 1024],
+        )
+        .expect("write");
     }
     dir
 }
@@ -70,8 +73,11 @@ fn fixture_locked(files: usize) -> (tempfile::TempDir, PathBuf) {
     let locked = dir.path().join("locked");
     fs::create_dir(&locked).expect("mkdir");
     for i in 0..files {
-        fs::write(locked.join(format!("payload-{i:03}.bin")), vec![7u8; 64 * 1024])
-            .expect("write");
+        fs::write(
+            locked.join(format!("payload-{i:03}.bin")),
+            vec![7u8; 64 * 1024],
+        )
+        .expect("write");
     }
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod");
     (dir, locked)
@@ -97,7 +103,12 @@ fn wrong_usage_exits_two() {
     assert_eq!(code(&bare), 2, "no arguments: {}", stderr_of(&bare));
 
     let partial = run(&["--job"]);
-    assert_eq!(code(&partial), 2, "flag without a path: {}", stderr_of(&partial));
+    assert_eq!(
+        code(&partial),
+        2,
+        "flag without a path: {}",
+        stderr_of(&partial)
+    );
 
     let extra = run(&["--job", "/tmp/x", "surplus"]);
     assert_eq!(code(&extra), 2, "a second operand: {}", stderr_of(&extra));
@@ -124,14 +135,21 @@ fn an_unknown_version_is_refused_before_anything_is_walked() {
     let job_path = dir.path().join("job.json");
     fs::write(
         &job_path,
-        format!("{{\"version\":2,\"deadline_secs\":60,\"paths\":[\"{}\"]}}", target.path().display()),
+        format!(
+            "{{\"version\":2,\"deadline_secs\":60,\"paths\":[\"{}\"]}}",
+            target.path().display()
+        ),
     )
     .expect("write job");
 
     let out = run(&["--job", job_path.to_str().expect("utf8")]);
     assert_eq!(code(&out), 4, "{}", stderr_of(&out));
     assert!(
-        !job_path.parent().expect("parent").join("results.jsonl").exists(),
+        !job_path
+            .parent()
+            .expect("parent")
+            .join("results.jsonl")
+            .exists(),
         "a refused job must walk nothing"
     );
 }
@@ -153,7 +171,11 @@ fn an_unknown_field_is_refused() {
     let out = run(&["--job", job_path.to_str().expect("utf8")]);
     assert_eq!(code(&out), 3, "{}", stderr_of(&out));
     assert!(
-        !job_path.parent().expect("parent").join("results.jsonl").exists(),
+        !job_path
+            .parent()
+            .expect("parent")
+            .join("results.jsonl")
+            .exists(),
         "a refused job must walk nothing"
     );
 }
@@ -176,7 +198,11 @@ fn invalid_paths_are_refused_before_anything_is_walked() {
         let out = run(&["--job", job_path.to_str().expect("utf8")]);
         assert_eq!(code(&out), 5, "{label}: {}", stderr_of(&out));
         assert!(
-            !job_path.parent().expect("parent").join("results.jsonl").exists(),
+            !job_path
+                .parent()
+                .expect("parent")
+                .join("results.jsonl")
+                .exists(),
             "{label}: a refused job must walk nothing"
         );
     }
@@ -198,7 +224,10 @@ fn a_valid_job_measures_paths_and_writes_both_files() {
     let bytes = lines[0]["tree"]["nodes"][0]["total_bytes"]
         .as_u64()
         .expect("total as u64");
-    assert!(bytes >= 4 * 64 * 1024, "four 64 KiB payloads measured, got {bytes}");
+    assert!(
+        bytes >= 4 * 64 * 1024,
+        "four 64 KiB payloads measured, got {bytes}"
+    );
 
     let st = status(&job_path);
     assert_eq!(st["version"], 1);
@@ -226,7 +255,11 @@ fn an_unreadable_path_is_reported_restricted_not_measured() {
     let (_job, job_path) = job(&[locked.to_str().expect("utf8")], 60);
 
     let out = run(&["--job", job_path.to_str().expect("utf8")]);
-    assert_eq!(code(&out), 0, "an unreadable path is a result, not a failure");
+    assert_eq!(
+        code(&out),
+        0,
+        "an unreadable path is a result, not a failure"
+    );
 
     let lines = results(&job_path);
     assert_eq!(lines.len(), 1);
@@ -263,9 +296,8 @@ fn a_spent_deadline_reports_deadline_with_partial_results() {
     let st = status(&job_path);
     assert_eq!(st["deadline_hit"], true);
     assert_eq!(st["completed"], 1);
-    assert_eq!(
+    assert!(
         dir.path().join("results.jsonl").exists(),
-        true,
         "deadline results are still written"
     );
 }
@@ -307,7 +339,9 @@ fn elevated_helper_agrees_with_du_and_unprivileged_recovers_nothing() {
         eprintln!("skipping: running as root, the unprivileged control would be meaningless");
         return;
     }
-    let probe = std::process::Command::new("sudo").args(["-n", "true"]).status();
+    let probe = std::process::Command::new("sudo")
+        .args(["-n", "true"])
+        .status();
     if !matches!(&probe, Ok(s) if s.success()) {
         eprintln!("skipping: sudo -n unavailable, the elevated arm needs it");
         return;
@@ -332,7 +366,8 @@ fn elevated_helper_agrees_with_du_and_unprivileged_recovers_nothing() {
     let lines = results(&elev_job);
     assert_eq!(lines.len(), 1);
     assert_eq!(
-        lines[0]["status"], "ok",
+        lines[0]["status"],
+        "ok",
         "root reads through mode 000: {}",
         serde_json::to_string(&lines[0]).unwrap_or_default()
     );
@@ -347,7 +382,6 @@ fn elevated_helper_agrees_with_du_and_unprivileged_recovers_nothing() {
         .expect("run du");
     assert!(du.status.success(), "du failed");
     let kb: u64 = String::from_utf8_lossy(&du.stdout)
-        .trim()
         .split_whitespace()
         .next()
         .and_then(|s| s.parse().ok())

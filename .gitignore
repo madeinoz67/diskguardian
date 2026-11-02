@@ -33,3 +33,6 @@ apps/desktop/src-tauri/gen/
 .claude/memory-proposals*.lock
 .claude/memory-drain-receipt*.json*
 .claude/scheduled_tasks.lock
+
+# Staged by apps/desktop/scripts/stage-admin.ts, rebuilt on every tauri:build
+apps/desktop/src-tauri/binaries/

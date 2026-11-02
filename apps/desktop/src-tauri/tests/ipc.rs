@@ -99,7 +99,10 @@ fn collect_adds_a_node_and_reports_the_total() {
 
     assert_eq!(result["count"], 1, "one item collected: {result}");
     let total = result["total"].as_u64().expect("total");
-    assert!(total >= 64 * 1024, "total should include the nested file, got {total}");
+    assert!(
+        total >= 64 * 1024,
+        "total should include the nested file, got {total}"
+    );
     assert_eq!(
         result["needs_confirmation"], true,
         "a direct child of the scan root always asks"
@@ -121,7 +124,10 @@ fn collecting_the_scanned_folder_itself_is_refused() {
     );
 
     assert!(result.is_err(), "the scan root must be refused");
-    assert!(result.unwrap_err().to_string().contains("cannot be collected"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("cannot be collected"));
 }
 
 #[test]
@@ -199,8 +205,12 @@ fn delete_strikes_the_node_through_and_shrinks_the_totals() {
     let (scan_id, root) = seed_scan(&app);
     let child = child_named(&webview, &scan_id, root, "sub");
 
-    let before = call(&webview, "view", serde_json::json!({ "scanId": scan_id, "nodeId": root }))
-        .expect("view");
+    let before = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": scan_id, "nodeId": root }),
+    )
+    .expect("view");
     let before_bytes = before[0]["bytes"].as_u64().unwrap_or(0);
 
     call(
@@ -226,7 +236,10 @@ fn delete_strikes_the_node_through_and_shrinks_the_totals() {
         .iter()
         .find(|node| node["name"] == "sub")
         .expect("the deleted folder stays listed so the user can see it");
-    assert_eq!(struck["missing"], true, "and it is struck through: {report}");
+    assert_eq!(
+        struck["missing"], true,
+        "and it is struck through: {report}"
+    );
     // C22: worth nothing in the totals (the exact 65536 drop is asserted below) but
     // still drawn — the view gives a missing node a floor sliver so the strike-through
     // has something to draw on. This assertion was originally `== 0`, which the
@@ -255,10 +268,7 @@ fn delete_strikes_the_node_through_and_shrinks_the_totals() {
 
 /// A scan whose `locked/` directory this process cannot read: the shape an
 /// administrator pass exists to fix.
-fn seed_scan_with_locked(
-    app: &tauri::App<MockRuntime>,
-    name: &str,
-) -> (String, u64, u64, PathBuf) {
+fn seed_scan_with_locked(app: &tauri::App<MockRuntime>, name: &str) -> (String, u64, u64, PathBuf) {
     if name.is_empty() {
         panic!("the locked fixture needs a name");
     }
@@ -274,8 +284,7 @@ fn seed_scan_with_locked(
         .nodes
         .iter()
         .position(|n| n.name == name)
-        .expect("locked node present")
-        as u64;
+        .expect("locked node present") as u64;
     let root = tree.root as u64;
     // Leak the fixture so the tree's paths stay valid for this test, as seed_scan does.
     std::mem::forget(dir);
@@ -350,8 +359,12 @@ fn scan_restricted_grafts_measured_areas_and_returns_a_view() {
     let (scan_id, root, _locked, _path) = seed_scan_with_locked(&app, "locked");
     inject_launcher(&app, fake_helper(|_, _| {}));
 
-    let before = call(&webview, "view", serde_json::json!({ "scanId": scan_id, "nodeId": root }))
-        .expect("view");
+    let before = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": scan_id, "nodeId": root }),
+    )
+    .expect("view");
     let before_bytes = before[0]["bytes"].as_u64().expect("bytes");
     let restricted = before
         .as_array()
@@ -369,7 +382,10 @@ fn scan_restricted_grafts_measured_areas_and_returns_a_view() {
     .expect("scan_restricted must succeed: {report:?}");
 
     assert_eq!(report["patched"], 1, "one area grafted: {report}");
-    assert_eq!(report["still_restricted"], 0, "nothing stays restricted: {report}");
+    assert_eq!(
+        report["still_restricted"], 0,
+        "nothing stays restricted: {report}"
+    );
     let after_bytes = report["bytes"].as_u64().expect("bytes");
     assert!(
         after_bytes > before_bytes + 512 * 1024,
@@ -482,7 +498,9 @@ fn a_failed_helper_reports_its_stderr() {
         "scan_restricted",
         serde_json::json!({ "scanId": scan_id }),
     );
-    let message = result.expect_err("a failed helper must be an error").to_string();
+    let message = result
+        .expect_err("a failed helper must be an error")
+        .to_string();
     assert!(
         message.contains("helper exploded"),
         "the stderr must surface: {message}"
@@ -496,13 +514,20 @@ fn a_result_whose_root_does_not_match_is_not_grafted() {
         .build()
         .expect("webview");
     let (scan_id, root, _locked, _path) = seed_scan_with_locked(&app, "locked");
-    inject_launcher(&app, fake_helper(|_path, tree| {
-        // A tampered or misdelivered result: measured somewhere else.
-        tree.scanned_root = PathBuf::from("/elsewhere/entirely");
-    }));
+    inject_launcher(
+        &app,
+        fake_helper(|_path, tree| {
+            // A tampered or misdelivered result: measured somewhere else.
+            tree.scanned_root = PathBuf::from("/elsewhere/entirely");
+        }),
+    );
 
-    let before = call(&webview, "view", serde_json::json!({ "scanId": scan_id, "nodeId": root }))
-        .expect("view");
+    let before = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": scan_id, "nodeId": root }),
+    )
+    .expect("view");
     let before_bytes = before[0]["bytes"].as_u64().expect("bytes");
 
     let report = call(
@@ -513,7 +538,10 @@ fn a_result_whose_root_does_not_match_is_not_grafted() {
     .expect("the command still completes");
 
     assert_eq!(report["patched"], 0, "nothing may be grafted from it");
-    assert_eq!(report["still_restricted"], 1, "the area is still restricted");
+    assert_eq!(
+        report["still_restricted"], 1,
+        "the area is still restricted"
+    );
     assert_eq!(
         report["bytes"].as_u64().expect("bytes"),
         before_bytes,
@@ -582,8 +610,11 @@ fn hostile_names_travel_in_the_job_file_only() {
         .expect("the pass runs and grafts nothing (no results were written)");
         assert_eq!(report["patched"], 0);
 
-        let (job_path, job_body, job_mode) =
-            captured.lock().expect("capture").clone().expect("job written");
+        let (job_path, job_body, job_mode) = captured
+            .lock()
+            .expect("capture")
+            .clone()
+            .expect("job written");
 
         // 1. The job round-trips the hostile name unchanged: the helper must be able
         //    to walk the real path.
@@ -641,7 +672,14 @@ fn hostile_names_travel_in_the_job_file_only() {
 
 #[test]
 fn template_inputs_outside_the_asserted_charset_are_refused() {
-    for bad in ["a;b", "a b (paren)", "quote\"in", "back\\slash", "tab\tchar", ""] {
+    for bad in [
+        "a;b",
+        "a b (paren)",
+        "quote\"in",
+        "back\\slash",
+        "tab\tchar",
+        "",
+    ] {
         assert!(
             admin::applescript_source("/safe/helper", bad).is_err(),
             "{bad:?} must be refused before any dialog is built"
@@ -652,5 +690,9 @@ fn template_inputs_outside_the_asserted_charset_are_refused() {
         );
     }
     // The full legal set still interpolates.
-    assert!(admin::applescript_source("/usr/local/bin/diskguardian-admin-x9_v2", "/var/folders/Tz/abc.d/job-1.json").is_ok());
+    assert!(admin::applescript_source(
+        "/usr/local/bin/diskguardian-admin-x9_v2",
+        "/var/folders/Tz/abc.d/job-1.json"
+    )
+    .is_ok());
 }

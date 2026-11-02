@@ -12,8 +12,8 @@ use diskguardian_core::{
 };
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tauri::{Emitter, State};
 
 #[derive(Debug, Serialize)]
@@ -118,7 +118,7 @@ pub fn volumes() -> Vec<VolumeInfo> {
         .collect();
 
     // Biggest first, which is the disk people are usually worried about.
-    volumes.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
+    volumes.sort_by_key(|v| std::cmp::Reverse(v.total_bytes));
     volumes
 }
 
@@ -156,7 +156,11 @@ pub async fn scan<R: tauri::Runtime>(
     });
 
     let scanned = tauri::async_runtime::spawn_blocking(move || {
-        scan_with_progress(&root, &diskguardian_core::ScanOptions::default(), Some(progress))
+        scan_with_progress(
+            &root,
+            &diskguardian_core::ScanOptions::default(),
+            Some(progress),
+        )
     })
     .await
     .map_err(|e| format!("scan task failed: {e}"))?
@@ -219,7 +223,7 @@ pub struct EmptyReport {
 fn trash_path() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        return std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".Trash"));
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".Trash"))
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -227,8 +231,7 @@ fn trash_path() -> Option<PathBuf> {
         if let Some(data) = std::env::var_os("XDG_DATA_HOME") {
             return Some(PathBuf::from(data).join("Trash"));
         }
-        return std::env::var_os("HOME")
-            .map(|home| PathBuf::from(home).join(".local/share/Trash"));
+        return std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share/Trash"));
     }
 
     #[cfg(windows)]
@@ -300,7 +303,11 @@ pub fn empty_trash(confirmed: bool) -> Result<EmptyReport, String> {
     #[cfg(windows)]
     {
         let status = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Clear-RecycleBin -Force -ErrorAction SilentlyContinue",
+            ])
             .status()
             .map_err(|e| format!("could not run powershell: {e}"))?;
         return Ok(EmptyReport {
@@ -518,7 +525,11 @@ pub fn delete_collected(
         freed,
         removed: outcome.removed,
         failed: outcome.failed,
-        mode: if permanent { "permanent".to_string() } else { "trash".to_string() },
+        mode: if permanent {
+            "permanent".to_string()
+        } else {
+            "trash".to_string()
+        },
         outcomes: outcome
             .outcomes
             .into_iter()
@@ -556,4 +567,3 @@ pub fn quicklook(state: State<'_, AppState>, scan_id: String, node_id: u64) -> R
     let path = node_path(&state, &scan_id, node_id)?;
     platform::quicklook(&path)
 }
-

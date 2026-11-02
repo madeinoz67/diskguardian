@@ -331,7 +331,13 @@ fn is_arena_coherent(tree: &Tree) -> bool {
             }
             None => {}
         }
-        if node.children.len() != node.children.iter().collect::<std::collections::HashSet<_>>().len() {
+        if node.children.len()
+            != node
+                .children
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        {
             return false;
         }
         for &child in &node.children {

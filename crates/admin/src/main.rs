@@ -44,6 +44,10 @@ const MAX_DEADLINE_SECS: u64 = 86_400;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Job {
+    /// Checked on the raw JSON before this struct is built, so a wrong version exits
+    /// with its own code rather than the unknown-fields one. Still declared here:
+    /// `deny_unknown_fields` rejects the document outright if the field is missing.
+    #[allow(dead_code)]
     version: u64,
     deadline_secs: u64,
     paths: Vec<String>,
@@ -132,7 +136,9 @@ fn run() -> u8 {
     };
 
     let deadline = Instant::now()
-        .checked_add(Duration::from_secs(job.deadline_secs.min(MAX_DEADLINE_SECS)))
+        .checked_add(Duration::from_secs(
+            job.deadline_secs.min(MAX_DEADLINE_SECS),
+        ))
         .unwrap_or_else(|| Instant::now() + Duration::from_secs(MAX_DEADLINE_SECS));
 
     let mut completed = 0usize;
@@ -215,9 +221,10 @@ fn measure(path: &Path, deadline: Instant) -> Tree {
         // unreadable directory (A3), as a one-node tree.
         Err(err) => Tree {
             nodes: vec![Node {
-                name: path
-                    .file_name()
-                    .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned()),
+                name: path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                ),
                 kind: NodeKind::Restricted,
                 own_bytes: 0,
                 total_bytes: 0,
