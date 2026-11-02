@@ -211,6 +211,20 @@ struct JobStatus {
 
 /// Measure the restricted areas of a stored scan with the user's OS-mediated consent.
 ///
+/// Whether this app run already holds an authorised helper.
+///
+/// The cadence is one prompt per session, so after the first approval a later scan should
+/// measure without asking again — and without re-offering a button that implies it will.
+#[tauri::command]
+pub async fn admin_authorised<R: tauri::Runtime>(
+    // Bound so the runtime type is inferable; an injected handle, never a message argument.
+    _app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let guard = state.admin_session.lock().await;
+    Ok(guard.as_ref().is_some_and(|session| session.daemon_started))
+}
+
 /// One prompt per app session: the first pass starts the serving helper behind the OS
 /// dialog, and later passes reuse it. Refused (dialog cancelled), failed or timed out,
 /// the tree is left exactly as it was — the unprivileged scan is complete on its own

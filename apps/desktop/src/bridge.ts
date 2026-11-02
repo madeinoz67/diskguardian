@@ -139,6 +139,11 @@ export async function quicklook(scanId: string, nodeId: number): Promise<void> {
  * Measure the restricted areas of a stored scan with one OS consent dialog. The
  * command takes a scan id and nothing else: the paths are derived on the Rust side.
  */
+export async function adminAuthorised(): Promise<boolean> {
+  if (!isTauri) return false
+  return invoke<boolean>('admin_authorised')
+}
+
 export async function scanRestricted(scanId: string): Promise<AdminScanReport> {
   if (!isTauri) {
     // The demo tree carries one restricted petal; "measuring" it is a no-op that keeps

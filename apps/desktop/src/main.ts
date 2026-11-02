@@ -227,7 +227,15 @@ async function scanPath(path: string): Promise<void> {
     // The affordance appears only where a runner exists (macOS) and only when there
     // is something to measure.
     if (result.partial && isMacPlatform(navigator.userAgent)) {
-      offerAdminMeasurement(result.bytes)
+      // Already authorised in this run: measure straight away and do not offer a second
+      // prompt the user has effectively already given.
+      const authorised = await bridge.adminAuthorised().catch(() => false)
+      if (authorised) {
+        state.stack = [{ nodeId: null, view: result.view }]
+        void measureRestricted()
+      } else {
+        offerAdminMeasurement(result.bytes)
+      }
     }
   } catch (error) {
     stopPartial()
