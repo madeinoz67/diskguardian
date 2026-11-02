@@ -686,3 +686,18 @@ body.dragging #sunburst {
   font-weight: 500;
   cursor: pointer;
 }
+
+.legend-note {
+  margin: 4px 8px 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(191, 90, 242, 0.12);
+  border: 1px solid rgba(191, 90, 242, 0.35);
+  color: #e3c6ff;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.legend-row .legend-size:where(:not(:empty)) {
+  white-space: nowrap;
+}

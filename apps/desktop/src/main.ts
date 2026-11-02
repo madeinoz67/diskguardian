@@ -325,6 +325,19 @@ function renderLegend(): void {
   list.className = 'legend-list'
 
   const children = [...root.children].sort((a, b) => (view[b]?.bytes ?? 0) - (view[a]?.bytes ?? 0))
+
+  // Say the purple petals out loud: the map shows them, but a count with the reason is what
+  // tells the user whether an administrator pass or Full Disk Access would help.
+  const restrictedCount = children.filter((i) => view[i]?.kind === 'restricted').length
+  if (restrictedCount > 0) {
+    const note = document.createElement('div')
+    note.className = 'legend-note'
+    note.textContent = `${restrictedCount} area${restrictedCount === 1 ? '' : 's'} not measurable`
+    note.title =
+      'Purple petals. macOS privacy controls (TCC) do not yield to an administrator pass; grant Full Disk Access to read these.'
+    legend.append(note)
+  }
+
   for (const index of children) {
     const node = view[index]
     if (!node) continue
@@ -343,7 +356,11 @@ function renderLegend(): void {
     name.textContent = label
     // The column is narrow and names are long: never leave the full name unreachable.
     name.title = label
-    row.title = node.missing ? `${label} — deleted, rescan to clear` : label
+    row.title = node.missing
+      ? `${label} — deleted, rescan to clear`
+      : node.kind === 'restricted'
+        ? `${label} — restricted: the system will not let any app read this. Measure restricted areas, or grant Full Disk Access, to see a size.`
+        : label
     if (node.missing) {
       name.classList.add('missing')
       row.classList.add('missing')
