@@ -259,12 +259,15 @@ fn delete_strikes_the_node_through_and_shrinks_the_totals() {
     );
 }
 
-// ─── administrator measurement (R3) ─────────────────────────────────────────────
+// ─── administrator measurement (R3, session model) ──────────────────────────────
 //
-// The launcher is the only platform piece: on macOS it is the osascript dialog, which
-// no test may raise. The seam in AppState lets these tests run the whole command —
-// job construction, results verification, grafting, report — against a launcher that
-// stands in for the dialog and the helper.
+// The privileged side is now one serving helper per app session (the principal's
+// 2026-11-02 amendment): the first pass spends the one OS dialog and starts a daemon
+// over the job/results files; later passes hand it more jobs with no second prompt.
+// The launcher seam stands in for the dialog, so the command — session bookkeeping,
+// job staging, verification, grafting, reporting — runs for real without a password.
+
+use std::sync::atomic::{AtomicUsize, Ordering as CountOrdering};
 
 /// A scan whose `locked/` directory this process cannot read: the shape an
 /// administrator pass exists to fix.
@@ -293,8 +296,7 @@ fn seed_scan_with_locked(app: &tauri::App<MockRuntime>, name: &str) -> (String, 
 }
 
 /// A measured tree exactly as the helper produces one for `path`: a real scan of a
-/// readable fixture, relabelled to the requested root. The helper cannot be root in a
-/// test, and this reproduces its output contract byte-for-byte where it matters.
+/// readable fixture, relabelled to the requested root.
 fn canned_tree_for(path: &str) -> diskguardian_core::Tree {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("measured-0.bin"), vec![7u8; 512 * 1024]).expect("write");
@@ -304,43 +306,95 @@ fn canned_tree_for(path: &str) -> diskguardian_core::Tree {
     tree
 }
 
-/// A launcher that "runs the helper" synchronously: for every job path it writes an
-/// honest-looking results line. `mangle` lets a test corrupt what the fake helper
-/// claims (wrong scanned_root, hostile names).
-fn fake_helper(
-    mangle: impl Fn(&str, &mut diskguardian_core::Tree) + Send + Sync + 'static,
-) -> admin::Launch {
-    Arc::new(move |job: &Path, _helper: &Path| {
-        let text = fs::read_to_string(job)?;
-        let doc: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        let dir = job.parent().expect("job dir").to_path_buf();
-        let mut out = String::new();
-        let paths = doc["paths"].as_array().expect("paths");
-        for path in paths {
-            let path = path.as_str().expect("path is a string");
-            let mut tree = canned_tree_for(path);
-            mangle(path, &mut tree);
-            let line = serde_json::json!({
-                "version": 1,
-                "path": path,
-                "status": "ok",
-                "tree": tree,
-            });
-            out.push_str(&line.to_string());
-            out.push('\n');
-        }
-        fs::write(dir.join("results.jsonl"), out)?;
-        fs::write(
-            dir.join("status.json"),
-            serde_json::json!({ "version": 1, "exit": 0, "completed": paths.len(), "deadline_hit": false })
-                .to_string(),
-        )?;
+type Mangle = Arc<dyn Fn(&str, &str, &mut diskguardian_core::Tree) -> bool + Send + Sync>;
+
+/// A stand-in for the dialog plus the serving helper: announces readiness, then
+/// processes `job-<n>.json` files exactly as the real daemon does — same names, same
+/// status-last completion marker. `mangle` sees (job stem, path, tree) and returns
+/// whether that results line is delivered at all, so tests can corrupt or withhold
+/// individual results.
+///
+/// Returns the launcher and a counter of how many times it was invoked — the
+/// one-prompt-per-session property is asserted against that counter.
+fn daemon_launcher(mangle: Mangle) -> (admin::Launch, Arc<AtomicUsize>) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let launch: admin::Launch = Arc::new(move |dir: &Path| {
+        counted.fetch_add(1, CountOrdering::SeqCst);
+        let daemon_dir = dir.to_path_buf();
+        let mangle = Arc::clone(&mangle);
+        std::thread::spawn(move || {
+            let _ = fs::write(daemon_dir.join("daemon.ready"), br#"{"version":1}"#);
+            let mut done: Vec<String> = Vec::new();
+            while daemon_dir.is_dir() {
+                if let Ok(entries) = fs::read_dir(&daemon_dir) {
+                    let mut jobs: Vec<String> = entries
+                        .flatten()
+                        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                        .filter(|n| n.starts_with("job-") && n.ends_with(".json"))
+                        .collect();
+                    jobs.sort();
+                    for job in jobs {
+                        let stem = job
+                            .strip_prefix("job-")
+                            .and_then(|s| s.strip_suffix(".json"))
+                            .unwrap_or("x")
+                            .to_string();
+                        if done.contains(&stem) {
+                            continue;
+                        }
+                        done.push(stem.clone());
+                        let Ok(text) = fs::read_to_string(daemon_dir.join(&job)) else {
+                            continue;
+                        };
+                        let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) else {
+                            continue;
+                        };
+                        let mut out = String::new();
+                        let mut delivered = 0usize;
+                        for path in doc["paths"].as_array().unwrap_or(&Vec::new()) {
+                            let path = path.as_str().unwrap_or_default();
+                            let mut tree = canned_tree_for(path);
+                            if mangle(&stem, path, &mut tree) {
+                                out.push_str(
+                                    &serde_json::json!({
+                                        "version": 1,
+                                        "path": path,
+                                        "status": "ok",
+                                        "tree": tree,
+                                    })
+                                    .to_string(),
+                                );
+                                out.push('\n');
+                                delivered += 1;
+                            }
+                        }
+                        let _ = fs::write(daemon_dir.join(format!("results-{stem}.jsonl")), out);
+                        let _ = fs::write(
+                            daemon_dir.join(format!("status-{stem}.json")),
+                            serde_json::json!({
+                                "version": 1,
+                                "exit": 0,
+                                "completed": delivered,
+                                "deadline_hit": false,
+                            })
+                            .to_string(),
+                        );
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
         Ok(admin::LaunchOutcome {
             success: true,
             stderr: String::new(),
         })
-    })
+    });
+    (launch, calls)
+}
+
+fn honest_daemon() -> (admin::Launch, Arc<AtomicUsize>) {
+    daemon_launcher(Arc::new(|_, _, _| true))
 }
 
 fn inject_launcher(app: &tauri::App<MockRuntime>, launch: admin::Launch) {
@@ -350,14 +404,19 @@ fn inject_launcher(app: &tauri::App<MockRuntime>, launch: admin::Launch) {
         .expect("launcher seam") = Some(launch);
 }
 
+fn webview(app: &tauri::App<MockRuntime>) -> tauri::WebviewWindow<MockRuntime> {
+    tauri::WebviewWindowBuilder::new(app, "main", Default::default())
+        .build()
+        .expect("webview")
+}
+
 #[test]
 fn scan_restricted_grafts_measured_areas_and_returns_a_view() {
     let app = build();
-    let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-        .build()
-        .expect("webview");
+    let webview = webview(&app);
     let (scan_id, root, _locked, _path) = seed_scan_with_locked(&app, "locked");
-    inject_launcher(&app, fake_helper(|_, _| {}));
+    let (launch, calls) = honest_daemon();
+    inject_launcher(&app, launch);
 
     let before = call(
         &webview,
@@ -379,7 +438,7 @@ fn scan_restricted_grafts_measured_areas_and_returns_a_view() {
         "scan_restricted",
         serde_json::json!({ "scanId": scan_id }),
     )
-    .expect("scan_restricted must succeed: {report:?}");
+    .expect("scan_restricted must succeed");
 
     assert_eq!(report["patched"], 1, "one area grafted: {report}");
     assert_eq!(
@@ -399,15 +458,79 @@ fn scan_restricted_grafts_measured_areas_and_returns_a_view() {
         .find(|n| n["name"] == "locked")
         .expect("locked still listed");
     assert_eq!(measured["kind"], "dir", "the petal is measured: {report}");
+    assert_eq!(
+        calls.load(CountOrdering::SeqCst),
+        1,
+        "one pass, one dialog spent"
+    );
+}
+
+/// The amendment's core property: a second pass in the same app run reuses the
+/// daemon. Pass one here also demonstrates a withheld result (one path's line never
+/// delivered), which is what leaves an area for pass two to measure.
+#[test]
+fn a_second_pass_reuses_the_daemon_without_a_second_prompt() {
+    let app = build();
+    let webview = webview(&app);
+    let (scan_id, root, _a, _b) = seed_two_locked(&app);
+    let (launch, calls) = daemon_launcher(Arc::new(|stem, path, _tree| {
+        // Pass one delivers only the first area; pass two delivers the rest.
+        !(stem == "1" && path.ends_with("locked2"))
+    }));
+    inject_launcher(&app, launch);
+
+    let first = call(
+        &webview,
+        "scan_restricted",
+        serde_json::json!({ "scanId": scan_id }),
+    )
+    .expect("first pass");
+    assert_eq!(first["patched"], 1, "{first}");
+    assert_eq!(
+        first["still_restricted"], 1,
+        "one area was withheld: {first}"
+    );
+
+    let second = call(
+        &webview,
+        "scan_restricted",
+        serde_json::json!({ "scanId": scan_id }),
+    )
+    .expect("second pass");
+    assert_eq!(second["patched"], 1, "{second}");
+    assert_eq!(second["still_restricted"], 0, "{second}");
+
+    assert_eq!(
+        calls.load(CountOrdering::SeqCst),
+        1,
+        "two passes, still exactly one dialog"
+    );
+    let _ = root;
+}
+
+/// One fixture, two restricted areas — for the multi-pass test.
+fn seed_two_locked(app: &tauri::App<MockRuntime>) -> (String, u64, PathBuf, PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let a = dir.path().join("locked");
+    let b = dir.path().join("locked2");
+    for (path, size) in [(&a, 256 * 1024), (&b, 128 * 1024)] {
+        fs::create_dir(path).expect("mkdir");
+        fs::write(path.join("secret.bin"), vec![7u8; size]).expect("write");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o000)).expect("chmod");
+    }
+    let tree = diskguardian_core::scan(dir.path(), &Default::default()).expect("scan");
+    let root = tree.root as u64;
+    std::mem::forget(dir);
+    let scan_id = app.state::<AppState>().insert(tree);
+    (scan_id, root, a, b)
 }
 
 #[test]
 fn scan_restricted_rejects_an_unknown_scan() {
     let app = build();
-    let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-        .build()
-        .expect("webview");
-    inject_launcher(&app, fake_helper(|_, _| {}));
+    let webview = webview(&app);
+    let (launch, _calls) = honest_daemon();
+    inject_launcher(&app, launch);
 
     let result = call(
         &webview,
@@ -421,11 +544,10 @@ fn scan_restricted_rejects_an_unknown_scan() {
 #[test]
 fn scan_restricted_with_nothing_restricted_is_an_error() {
     let app = build();
-    let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-        .build()
-        .expect("webview");
+    let webview = webview(&app);
     let (scan_id, _root) = seed_scan(&app);
-    inject_launcher(&app, fake_helper(|_, _| {}));
+    let (launch, _calls) = honest_daemon();
+    inject_launcher(&app, launch);
 
     let result = call(
         &webview,
@@ -445,13 +567,11 @@ fn scan_restricted_with_nothing_restricted_is_an_error() {
 #[test]
 fn a_declined_dialog_is_a_typed_refusal_not_a_crash() {
     let app = build();
-    let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-        .build()
-        .expect("webview");
+    let webview = webview(&app);
     let (scan_id, _root, _locked, _path) = seed_scan_with_locked(&app, "locked");
     inject_launcher(
         &app,
-        Arc::new(|_job: &Path, _helper: &Path| {
+        Arc::new(|_dir: &Path| {
             Ok(admin::LaunchOutcome {
                 success: false,
                 stderr: "31:83: execution error: User canceled. (-128)".to_string(),
@@ -479,13 +599,11 @@ fn a_declined_dialog_is_a_typed_refusal_not_a_crash() {
 #[test]
 fn a_failed_helper_reports_its_stderr() {
     let app = build();
-    let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-        .build()
-        .expect("webview");
+    let webview = webview(&app);
     let (scan_id, _root, _locked, _path) = seed_scan_with_locked(&app, "locked");
     inject_launcher(
         &app,
-        Arc::new(|_job: &Path, _helper: &Path| {
+        Arc::new(|_dir: &Path| {
             Ok(admin::LaunchOutcome {
                 success: false,
                 stderr: "helper exploded".to_string(),
@@ -507,20 +625,49 @@ fn a_failed_helper_reports_its_stderr() {
     );
 }
 
+/// A launcher that reports approval but never brings a daemon up: the command must
+/// say the helper did not start, not hang until the pass budget expires.
+#[test]
+fn a_helper_that_never_becomes_ready_is_a_named_failure() {
+    std::env::set_var("DISKGUARDIAN_TEST_READY_WAIT_MS", "200");
+    let app = build();
+    let webview = webview(&app);
+    let (scan_id, _root, _locked, _path) = seed_scan_with_locked(&app, "locked");
+    inject_launcher(
+        &app,
+        Arc::new(|_dir: &Path| {
+            Ok(admin::LaunchOutcome {
+                success: true,
+                stderr: String::new(),
+            })
+        }),
+    );
+
+    let result = call(
+        &webview,
+        "scan_restricted",
+        serde_json::json!({ "scanId": scan_id }),
+    );
+    let message = result
+        .expect_err("an approved-but-absent helper must fail")
+        .to_string();
+    assert!(
+        message.contains("did not start"),
+        "the failure must name the mechanism: {message}"
+    );
+}
+
 #[test]
 fn a_result_whose_root_does_not_match_is_not_grafted() {
     let app = build();
-    let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-        .build()
-        .expect("webview");
+    let webview = webview(&app);
     let (scan_id, root, _locked, _path) = seed_scan_with_locked(&app, "locked");
-    inject_launcher(
-        &app,
-        fake_helper(|_path, tree| {
-            // A tampered or misdelivered result: measured somewhere else.
-            tree.scanned_root = PathBuf::from("/elsewhere/entirely");
-        }),
-    );
+    let (launch, _calls) = daemon_launcher(Arc::new(|_stem, _path, tree| {
+        // A tampered or misdelivered result: measured somewhere else.
+        tree.scanned_root = PathBuf::from("/elsewhere/entirely");
+        true
+    }));
+    inject_launcher(&app, launch);
 
     let before = call(
         &webview,
@@ -565,36 +712,55 @@ fn hostile_names_travel_in_the_job_file_only() {
 
     for name in hostile {
         let app = build();
-        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-            .build()
-            .expect("webview");
-        let (scan_id, _root, locked_id, locked_path) = seed_scan_with_locked(&app, name);
+        let webview = webview(&app);
+        let (scan_id, _root, _locked, locked_path) = seed_scan_with_locked(&app, name);
 
-        // Capture the job file the command wrote, through the launcher seam — the
-        // command deletes the job directory when it returns, so everything about the
-        // file must be observed while the pass is live.
-        let captured: Arc<Mutex<Option<(PathBuf, String, u32)>>> = Arc::new(Mutex::new(None));
+        // Capture the job files the command staged, through the daemon seam — the
+        // session directory is removed when the app state drops, so everything about
+        // them must be observed while the pass is live.
+        let captured: Arc<Mutex<Vec<(PathBuf, String, u32)>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&captured);
         inject_launcher(
             &app,
-            Arc::new(move |job: &Path, _helper: &Path| {
-                let mode = fs::metadata(job)
-                    .map(|m| {
-                        #[cfg(unix)]
-                        {
-                            m.permissions().mode() & 0o777
+            Arc::new(move |dir: &Path| {
+                let watch = dir.to_path_buf();
+                let sink = Arc::clone(&sink);
+                std::thread::spawn(move || {
+                    let _ = fs::write(watch.join("daemon.ready"), br#"{"version":1}"#);
+                    let mut seen: Vec<String> = Vec::new();
+                    while watch.is_dir() {
+                        if let Ok(entries) = fs::read_dir(&watch) {
+                            let mut jobs: Vec<String> = entries
+                                .flatten()
+                                .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                                .filter(|n| n.starts_with("job-") && n.ends_with(".json"))
+                                .collect();
+                            jobs.sort();
+                            for job in jobs {
+                                if seen.contains(&job) {
+                                    continue;
+                                }
+                                seen.push(job.clone());
+                                let path = watch.join(&job);
+                                let mode = fs::metadata(&path)
+                                    .map(|m| m.permissions().mode() & 0o777)
+                                    .unwrap_or(0);
+                                let body = fs::read_to_string(&path).unwrap_or_default();
+                                sink.lock().expect("capture").push((path, body, mode));
+                                // No results: the pass completes having grafted nothing.
+                                let stem = job
+                                    .strip_prefix("job-")
+                                    .and_then(|s| s.strip_suffix(".json"))
+                                    .unwrap_or("x");
+                                let _ = fs::write(
+                                    watch.join(format!("status-{stem}.json")),
+                                    r#"{"version":1,"exit":0,"completed":0,"deadline_hit":false}"#,
+                                );
+                            }
                         }
-                        #[cfg(not(unix))]
-                        {
-                            0o600
-                        }
-                    })
-                    .unwrap_or(0);
-                *sink.lock().expect("capture") = Some((
-                    job.to_path_buf(),
-                    fs::read_to_string(job).unwrap_or_default(),
-                    mode,
-                ));
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                });
                 Ok(admin::LaunchOutcome {
                     success: true,
                     stderr: String::new(),
@@ -610,11 +776,13 @@ fn hostile_names_travel_in_the_job_file_only() {
         .expect("the pass runs and grafts nothing (no results were written)");
         assert_eq!(report["patched"], 0);
 
-        let (job_path, job_body, job_mode) = captured
-            .lock()
-            .expect("capture")
-            .clone()
-            .expect("job written");
+        let jobs = captured.lock().expect("capture").clone();
+        assert_eq!(jobs.len(), 1, "one job staged: {jobs:?}");
+        let (job_path, job_body, job_mode) = jobs.first().expect("captured").clone();
+        let session_dir = job_path
+            .parent()
+            .expect("job lives in the session dir")
+            .to_path_buf();
 
         // 1. The job round-trips the hostile name unchanged: the helper must be able
         //    to walk the real path.
@@ -635,22 +803,24 @@ fn hostile_names_travel_in_the_job_file_only() {
         assert_eq!(job_mode, 0o600, "the job file is 0600: {job_mode:o}");
 
         // 3. The dialog source and the child argv contain none of it: byte-identical
-        //    to the fixed template, whatever the disk happens to be called.
+        //    to the fixed template, whatever the disk happens to be called. Only two
+        //    app-generated strings move: the helper and the staging directory.
         let helper = "/Applications/DiskGuardian.app/Contents/MacOS/diskguardian-admin";
         let source =
-            admin::applescript_source(helper, &job_path.display().to_string()).expect("source");
+            admin::applescript_source(helper, &session_dir.display().to_string()).expect("source");
         assert_eq!(
             source,
             format!(
-                "do shell script \"{helper} --job {}\" with administrator privileges",
-                job_path.display()
+                "do shell script \"{helper} --serve {} > /dev/null 2>&1 &\" \
+                 with administrator privileges",
+                session_dir.display()
             ),
             "the template is fixed: only the two app-generated paths move"
         );
-        // The template's own two quote characters are the only quotes that may appear;
-        // everything else hostile — including the fixture's whole name — must be absent.
-        // (The byte-identity assert above already pins the structure; this makes a
-        // failure readable when it ever bites.)
+        // The template's own quotes are the only quotes that may appear; everything
+        // else hostile — including the fixture's whole name — must be absent. (The
+        // byte-identity assert above already pins the structure; this makes a failure
+        // readable when it ever bites.)
         let disarmed = source.replace('"', "");
         for fragment in [";", "`", "$", "curl", "\n", name] {
             assert!(
@@ -666,7 +836,6 @@ fn hostile_names_travel_in_the_job_file_only() {
 
         // Restore readability so the leaked fixture directory is not a surprise.
         let _ = fs::set_permissions(&locked_path, fs::Permissions::from_mode(0o755));
-        let _ = locked_id;
     }
 }
 
@@ -685,14 +854,14 @@ fn template_inputs_outside_the_asserted_charset_are_refused() {
             "{bad:?} must be refused before any dialog is built"
         );
         assert!(
-            admin::applescript_source(bad, "/safe/job.json").is_err(),
+            admin::applescript_source(bad, "/safe/staging-dir").is_err(),
             "{bad:?} as the helper path must be refused too"
         );
     }
     // The full legal set still interpolates.
     assert!(admin::applescript_source(
         "/usr/local/bin/diskguardian-admin-x9_v2",
-        "/var/folders/Tz/abc.d/job-1.json"
+        "/var/folders/Tz/abc.d/staging-1"
     )
     .is_ok());
 }

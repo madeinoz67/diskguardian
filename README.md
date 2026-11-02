@@ -93,18 +93,21 @@ Deletion is the only destructive thing here, so it is the most constrained:
 Some areas (other users' homes, most of `/Library`, parts of `/private/var`) cannot be
 read with your own permissions, and DiskGuardian draws them as purple "restricted"
 petals rather than pretending they are empty. After such a scan, the status bar offers
-**Measure restricted areas…** — one pass, one system password dialog, and those petals
-are re-measured and redrawn at their real sizes.
+**Measure restricted areas…** — the first pass raises one system password dialog, and
+those petals are re-measured and redrawn at their real sizes.
 
 What that pass is, plainly:
 
 - **The dialog belongs to macOS.** The app never sees, holds, or caches your password.
-  One prompt per pass — all restricted areas are batched into a single job — and no
-  privileged process exists between passes.
-- **The privileged side measures; it never deletes.** A small helper binary walks the
-  restricted paths read-only and writes the numbers back. It contains no deletion code
-  at all, and deletion continues to run unprivileged, behind the same guard as always.
-  Seeing a protected folder is never the same as being able to delete it.
+  There is **one prompt per app session**: approving it starts a small measurement
+  helper that serves every later pass without asking again. The helper lives exactly
+  as long as the app does — it exits when the app exits (its working directory goes
+  away), when the app's heartbeat stops (a crash), or after 15 idle minutes — and no
+  privileged process exists between app runs.
+- **The privileged side measures; it never deletes.** The helper walks the restricted
+  paths read-only and writes the numbers back. It contains no deletion code at all,
+  and deletion continues to run unprivileged, behind the same guard as always. Seeing
+  a protected folder is never the same as being able to delete it.
 - **You may still have purple petals afterwards.** Root does not bypass macOS privacy
   controls (TCC), so folders like `~/Library/Mail` may stay restricted until DiskGuardian
   is granted Full Disk Access. Whatever could not be measured is reported with a count,
