@@ -611,6 +611,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "diskguardian-admin"
+version = "0.1.0"
+dependencies = [
+ "diskguardian-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "diskguardian-app"
 version = "0.1.0"
 dependencies = [

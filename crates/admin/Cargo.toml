@@ -1,0 +1,20 @@
+[package]
+name = "diskguardian-admin"
+description = "One-shot read-only measurement helper for administrator scanning (job file in, results file out)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+diskguardian-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
