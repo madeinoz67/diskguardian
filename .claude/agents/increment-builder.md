@@ -20,8 +20,19 @@ Read the design document you were pointed at, in full, including its deferrals a
 pre-committed acceptance rule. Then read `ISA.md` (the claims and anti-claims the change
 touches) and `.claude/memory-protocol.md`.
 
-Confirm the branch you are on. Work in the checkout you were given, on a branch cut from
-`main`. Never work in the maintainer's main checkout.
+**Isolate yourself before you touch a file.** Run `git rev-parse --show-toplevel` and compare it
+with `git worktree list`. If you are sitting in the primary checkout, create your own worktree
+first and do every subsequent command there:
+
+```bash
+git worktree add ../diskguardian-<slug> -b <slug> main
+```
+
+Never edit the primary checkout. On 2026-11-02 a build agent worked in the shared tree, switched
+its checkout onto its own branch, and the maintainer's commits landed on that branch while a
+`git add -A` swept the agent's half-finished work into an unrelated commit. Neither side could
+see it until CI went red. The worktree is what makes that impossible rather than merely
+discouraged.
 
 ## Gortex posture
 

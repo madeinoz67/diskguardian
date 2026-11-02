@@ -54,8 +54,14 @@ cd apps/desktop && bun run tauri:build   # the bundle
   precisely so this is caught; clippy on one platform is not a gate.
 - **No "should work".** Engine claims close on `cargo test` output; appearance claims close
   on a screenshot whose pixels someone looked at.
-- **Branch-scoped edits.** If a second session is working an area, do not rewrite the same
-  files in place.
+- **Parallel work happens in a worktree, never in the primary checkout.** Every dispatched
+  agent and every second session gets its own `git worktree`; the primary tree is the
+  integration checkout and stays on `main`. This is not tidiness: on 2026-11-02 an agent
+  switched the shared checkout onto its own branch, the main session's commits landed there,
+  and a `git add -A` swept the agent's half-finished work into a commit about something else.
+  Nothing about that was visible from either side until the tests went red.
+- **Stage explicit paths, never `git add -A`,** in any tree that another process may be
+  writing to.
 
 ## Memory
 
