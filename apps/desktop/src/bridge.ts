@@ -51,9 +51,9 @@ export async function onScanProgress(handler: (branch: BranchDone) => void): Pro
   return unlisten
 }
 
-export async function scan(path: string): Promise<ScanResponse> {
-  if (!isTauri) return demoScan(path)
-  return invoke<ScanResponse>('scan', { path })
+export async function scan(path: string, nonce: string): Promise<ScanResponse> {
+  if (!isTauri) return demoScan(path, nonce)
+  return invoke<ScanResponse>('scan', { path, nonce })
 }
 
 /**
@@ -193,6 +193,7 @@ export async function scanRestricted(scanId: string): Promise<AdminScanReport> {
     // The demo tree carries one restricted petal; "measuring" it is a no-op that keeps
     // the browser demo shape-complete without pretending a dialog appeared.
     return {
+      scan_id: scanId,
       patched: 1,
       still_restricted: 0,
       bytes: demoNodes[0]?.bytes ?? 0,
@@ -339,12 +340,17 @@ function buildDemo(): ViewNode[] {
   return nodes
 }
 
-function demoScan(path: string): ScanResponse {
+function demoScan(path: string, nonce: string): ScanResponse {
   demoNodes = buildDemo()
-  // Report branches the way the real scanner does: one at a time, out of size order.
+  // Report branches the way the real scanner does: one at a time, out of size order, and
+  // stamped with the scan they belong to — the demo would otherwise hide the very bug the
+  // nonce exists to stop.
   const order = [...DEMO].sort((a, b) => a.size - b.size)
   order.forEach((spec, i) => {
-    setTimeout(() => emitDemo({ name: spec.name, bytes: spec.size, files: Math.round(spec.size / 9000) }), 120 + i * 260)
+    setTimeout(
+      () => emitDemo({ nonce, name: spec.name, bytes: spec.size, files: Math.round(spec.size / 9000) }),
+      120 + i * 260,
+    )
   })
   demoCollected.clear()
   const root = demoNodes[0]!

@@ -517,7 +517,16 @@ increment opens.
 - **R11 — Lower**: cloud accounts, parallel multi-disk scanning, disk images, network
   volumes, Forget scan results.
 - **R14 — Concurrent scans are served fairly, or refused** (opened 2026-11-02 from C13's
-  narrowing). Today a scan started behind a large one does not complete until the large one
+  narrowing; **half landed 2026-11-02**). A superseded scan is now asked to stop and, if it
+  observes the request, returns `ScanError::Cancelled` with no tree — checked before the walk,
+  per directory, per listing entry, per measurement entry, and before the directory dispatch.
+  What remains open, named rather than implied: the flag is **one slot per app**, so the
+  operation it can express is "cancel the most recently registered walk", not "cancel exactly
+  the scan I superseded" — a canccel arriving during the superseded scan's `peekRoot` finds an
+  empty slot and lets that walk run. Making it per-generation needs the request to carry an id;
+  that and fair scheduling are the rest of this row. There is also no Cancel button yet, so
+  every canceller is a superseding scan and the "cancelled reads as failed" path is unmasked
+  but untested in anger. Today a scan started behind a large one does not complete until the large one
   does: both walks submit to one rayon pool and nothing cancels the superseded one. Two honest
   shapes, and the cheaper one is probably right — either refuse to start a scan while one is in
   flight and say so on the button, or give each scan its own pool and add a cancel path through
@@ -537,6 +546,22 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-02 — Review found what the gates could not. Three lanes (code review, refutation,
+  mechanism critique) ran against the day's fixes and produced sixteen findings, six of them
+  MEDIUM or blocking. The pattern worth keeping: **every one that mattered was found by reading
+  the plumbing, not by running the thing.** The scan-token fix stopped a stale listener painting
+  but never stopped a fresh listener listening, because `scan-progress` carries no scan identity
+  — the screenshots were of a fixture whose trees shared no child names, which is exactly the
+  case that hides it. The cancellation flag was ignored entirely for a file root. The
+  measurement loop was unpolled, so cancelling a wide directory still stat'ed everything already
+  collected (3.9 µs/entry measured). And a privileged pass could overwrite a newer scan's view,
+  because `AdminScanReport` named no scan. All folded: progress events are stamped with a
+  per-start nonce and filtered on it, a cancelled walk emits nothing, both root shapes honour the
+  request, the measurement loop polls, the admin report carries its `scan_id` and the frontend
+  drops a report for a scan it is no longer showing, `beginScan` stops the old animation, and the
+  stage is cleared before the one await in `scanPath` rather than after it. Two of my own
+  claims were wrong and are corrected above rather than edited away.
 
 - 2026-11-02 — C13 closed and narrowed; C8 closed. Driving the built app verified both
   directions of navigation (petal re-roots, centre restores exactly) and showed that a scan

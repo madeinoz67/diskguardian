@@ -122,6 +122,12 @@ export interface FreshnessReport {
 }
 
 export interface BranchDone {
+  /**
+   * The scan this report belongs to. `scan-progress` is one global event name, so without
+   * this the next scan's listener accepts the previous scan's branches and paints them at
+   * the wrong widths.
+   */
+  nonce: string
   name: string
   bytes: number
   files: number
@@ -147,6 +153,8 @@ export interface DeleteReport {
 
 /** What an administrator measurement pass did to the stored tree. */
 export interface AdminScanReport {
+  /** Which scan this was grafted into. A pass can outlive the scan that asked for it. */
+  scan_id: string
   patched: number
   still_restricted: number
   bytes: number

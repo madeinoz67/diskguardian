@@ -137,19 +137,37 @@ pub fn peek_root(path: String) -> Vec<String> {
     names
 }
 
+/// One branch finishing, stamped with the scan that finished it.
+///
+/// The stamp is the point: `scan-progress` is one global event name, so without it the next
+/// scan's listener accepts the previous scan's reports and paints its petals with somebody
+/// else's numbers. A scan id would not do, because it is minted only when the walk finishes;
+/// the frontend's per-start nonce exists before the walk does.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScanProgress {
+    pub nonce: String,
+    pub name: String,
+    pub bytes: u64,
+    pub files: u64,
+}
+
 #[tauri::command]
 pub async fn scan<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     path: String,
+    nonce: Option<String>,
 ) -> Result<ScanResponse, String> {
     let root = PathBuf::from(&path);
     if !root.exists() {
         return Err(format!("{path} does not exist"));
     }
+    let nonce = nonce.unwrap_or_default();
 
-    // The walk in flight watches this flag. A newer scan sets it, so the abandoned walk stops
-    // instead of competing for the machine with the scan the user actually asked for.
+    // The walk in flight watches this flag, and `cancel_scan` is what sets it. Registering a
+    // new scan *replaces* the slot rather than signalling the old walk — so a walk is stopped
+    // only if a cancel lands before this line runs. The comments here used to claim otherwise,
+    // which read fine and was false; see ISA R14 for what that ordering cannot express.
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let clear_me = cancel.clone();
     {
@@ -161,10 +179,20 @@ pub async fn scan<R: tauri::Runtime>(
     }
 
     // Each branch is emitted the moment its subtree is measured, so the flower grows
-    // instead of appearing at the end.
+    // instead of appearing at the end — and stamped, so only the scan that owns this walk
+    // can act on it.
     let handle = app.clone();
+    let stamp = nonce.clone();
     let progress: ProgressFn = Arc::new(move |branch: BranchDone| {
-        let _ = handle.emit("scan-progress", &branch);
+        let _ = handle.emit(
+            "scan-progress",
+            &ScanProgress {
+                nonce: stamp.clone(),
+                name: branch.name,
+                bytes: branch.bytes,
+                files: branch.files,
+            },
+        );
     });
 
     let outcome = tauri::async_runtime::spawn_blocking(move || {
@@ -177,8 +205,9 @@ pub async fn scan<R: tauri::Runtime>(
     .await
     .map_err(|e| format!("scan task failed: {e}"))?;
 
-    // Retire the flag whether the walk finished, failed or was cancelled: leaving a spent
-    // flag in the slot would cancel the next scan before it started.
+    // Retire the flag. Not because a leftover would cancel the next scan — the next scan
+    // overwrites the slot with a fresh flag and a walk only ever reads its own — but so a
+    // cancel arriving after this walk ended does not signal a finished scan.
     if let Ok(mut slot) = state.scan_cancel.lock() {
         if slot
             .as_ref()
