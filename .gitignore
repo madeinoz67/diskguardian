@@ -28,6 +28,10 @@ apps/desktop/src-tauri/gen/
 /tmp/
 *.log
 
+# Git worktrees for parallel slices — under the repo so the path stays inside the
+# tracked root, ignored so they never enter the index or a scan of this tree.
+.worktrees/
+
 # Memory ledger — private findings, never committed
 .claude/memory-proposals*.jsonl
 .claude/memory-proposals*.lock
