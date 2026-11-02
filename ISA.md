@@ -52,7 +52,10 @@ A sparse fixture file whose logical length is far larger than its allocation is 
 ### C3 — Hard links counted once  `[x]`
 A fixture with several hard links to a single inode reports exactly one file's allocation for that inode, and the extra names appear as zero-size links.
 **Falsifier:** fixture test where total equals N × single-file allocation.
-**Scope note (2026-11-02):** dedup is per walk. An elevated pass walks restricted roots
+**Scope note (2026-11-02):** dedup is per walk, and it is Unix-only — inode identity keys on
+`(dev, ino)` and Windows has no inode through std, so on Windows no name is marked skipped
+and hard-linked bytes are counted once per name. Stated, not hidden; the test is gated to
+Unix for that reason rather than passing vacuously. An elevated pass walks restricted roots
 separately, so a hard link spanning a restricted root and a readable tree counts twice. A
 stated limit, not a weakening within a single walk.
 
