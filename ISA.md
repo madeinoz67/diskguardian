@@ -279,13 +279,23 @@ human approval: **+3.8 GB**, against a ≥1 GB ship threshold. Ship.
 **AC2's elevated arm is still open** — the 1%-of-`sudo du -sk` corroboration needs a `sudo` run
 this session did not take, and the RED control (the same pipeline unprivileged recovering exactly
 zero) is covered by the IPC suite rather than by a live run.
-**Anomaly, recorded and still unresolved — with one hypothesis now refuted.** The pass began
-without the "Measure restricted areas…" button being pressed; the only click was Scan. The first
-suspicion was that `admin_authorised()` reads a record persisted from an earlier run. Reading the
-code refutes it: it consults `state.admin_session` in memory, which is `None` on a fresh launch.
-So the mechanism is something else — a mis-routed click after the layout changed, or a second
-trigger inside the scan-completion path — and it stays open rather than being written off. The
-user-visible risk if real: the app can raise a root-consent dialog nobody asked for.
+**Anomaly — NOT REPRODUCIBLE, closed as a one-off rather than a defect.** The first pass began
+without the "Measure restricted areas…" button being pressed; the only click was Scan. Two
+hypotheses were tested and both are dead. *Persisted authorisation:* refuted by reading the code
+— `admin_authorised()` consults `state.admin_session` in memory, `None` on a fresh launch.
+*Code path:* refuted by a clean re-run on a fresh instance, which scanned the same root to the
+same 7.4 GB with "some items restricted", **offered the enabled Measure button, raised no dialog,
+started no helper and wrote no log entry**. Identical input, correct behaviour. The likely
+explanation is a mis-delivered click from the automation harness rather than the app: the same
+coordinates that press Scan in the overview also sit inside the stage once the view has changed.
+Left in the record as a one-off observation, because "we could not reproduce it" is a weaker
+statement than "it cannot happen", and a root-consent dialog appearing unasked is worth
+remembering even at one sighting.
+**Liveness confirmed on real hardware, for free.** Killing the app left the helper alive at +3 s
+and gone by +8 s, so the heartbeat mechanism does its job without a test harness. The staging
+directory survived the SIGTERM (a `TempDir` drop does not run on an abrupt kill), so on this path
+the heartbeat is the mechanism that actually ends the session — worth knowing, because the design
+lists three and only one of them fired.
 
 ### C24 — Duplicate groups are content-identical, never a space promise  `[x]`
 A duplicate pass over a finished scan (never during one) groups only files whose whole-file
