@@ -80,10 +80,18 @@ pub fn scan_with_progress(
     progress: Option<ProgressFn>,
 ) -> Result<Tree, ScanError> {
     let started = Instant::now();
-    let meta = fs::symlink_metadata(root).map_err(|source| ScanError::Root {
-        path: root.to_path_buf(),
-        source,
-    })?;
+    // Follow the ROOT if it is a symlink, and only the root.
+    //
+    // `/tmp` is a symlink to `/private/tmp` on macOS, so `symlink_metadata` reported the
+    // root as a link, the walker treated it as a single file, and scanning `/tmp` returned
+    // zero files while Finder showed plenty. Inside the walk symlinks are still never
+    // followed: a link costs its own metadata and nothing more.
+    let meta = fs::metadata(root)
+        .or_else(|_| fs::symlink_metadata(root))
+        .map_err(|source| ScanError::Root {
+            path: root.to_path_buf(),
+            source,
+        })?;
 
     let builder = Builder {
         // The inode ledger only exists where hard links are identified; on other platforms

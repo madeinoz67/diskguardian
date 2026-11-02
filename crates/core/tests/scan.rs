@@ -688,3 +688,29 @@ fn find_matches_by_name_size_and_returns_nothing_above_the_limit() {
     );
     assert!(found[0].path.ends_with("holiday.dmg"));
 }
+
+/// A root that is a symlink must be followed.
+///
+/// `/tmp` is a symlink to `/private/tmp` on macOS. Resolving the root with
+/// `symlink_metadata` made it look like a file, so scanning `/tmp` reported nothing at all
+/// while the Finder showed its contents.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_root_is_walked_not_treated_as_a_file() {
+    let real = tempfile::tempdir().expect("tempdir");
+    fs::write(real.path().join("inside.bin"), vec![1u8; 8192]).expect("write");
+
+    let holder = tempfile::tempdir().expect("holder");
+    let link = holder.path().join("link-to-real");
+    std::os::unix::fs::symlink(real.path(), &link).expect("symlink");
+
+    let tree = scan(&link, &options()).expect("scan follows the root link");
+
+    assert_eq!(
+        tree.nodes[tree.root].kind,
+        NodeKind::Directory,
+        "the root is a directory once the link is followed"
+    );
+    assert_eq!(tree.file_count(), 1, "and its contents are walked");
+    assert!(tree.total_bytes() > 0);
+}
