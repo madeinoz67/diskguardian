@@ -203,11 +203,39 @@ function showError(text: string): void {
   setStatus(text)
 }
 
+/**
+ * Empty the stage for a scan that is about to start.
+ *
+ * The canvas was replaced when a scan began, but the two surfaces beside it were not: the
+ * contents list kept the previous directory's rows, totals and collect buttons, and the
+ * breadcrumb kept its path, for the whole of the next scan — and for ever, if that scan
+ * failed before its first paint. So selecting a new folder showed the old folder's contents
+ * while the new one was measured. Reported by the principal, 2026-11-02.
+ *
+ * This runs before the first `await`, so a scan that never starts leaves an empty stage
+ * rather than somebody else's disk on screen.
+ */
+function beginScan(path: string): void {
+  state.stack = []
+  state.rootPath = path
+  state.collectedTotal = 0
+  state.collectedCount = 0
+  state.collectedIds = []
+  state.needsConfirmation = false
+
+  sunburst.setView([])
+  sunburst.setCollected([])
+  renderLegend()
+  renderCrumbs()
+  updateCollector()
+}
+
 async function scanPath(path: string): Promise<void> {
   overview.hidden = true
   // Every panel describes the screen that was on it; a new scan makes them stale.
   closeOverlays()
   hideAdminMeasurement()
+  beginScan(path)
   setStatus('Scanning…')
   document.body.classList.add('scanning')
   let unsubscribe: (() => void) | null = null
@@ -313,10 +341,19 @@ function renderCrumbs(): void {
     .filter((name): name is string => Boolean(name))
 
   if (trail.length === 0) {
+    // No scan is on screen: while one runs, or after one failed. The path is the honest
+    // label, and the way back out stays available — a long scan must not trap the user.
     const fallback = document.createElement('span')
     fallback.className = 'crumb active'
     fallback.textContent = state.rootPath || 'Nothing scanned'
     crumbs.append(fallback)
+
+    const back = document.createElement('button')
+    back.type = 'button'
+    back.className = 'crumb'
+    back.textContent = 'Disks and folders'
+    back.addEventListener('click', () => void showOverview())
+    crumbs.prepend(back)
     return
   }
 
