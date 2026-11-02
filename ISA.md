@@ -289,7 +289,8 @@ increment opens.
 - **R1 — C18**: collecting from the list. Backend proven by the IPC suite; the frontend
   path has not reproduced since the delete fix, so this needs one click to confirm or refute.
 - **R6 — struck-through items**: DONE (C22).
-- **R2 — C14**: drop the redundant per-directory `stat` (double `du`'s kernel time).
+- **R12 — Manual path entry**: DONE (2026-11-02). Type a path in the overview and scan it; `~` expands, Cmd-L focuses the field. Drag-and-drop and the folder picker remain, but neither needs a dialog now.
+- **R13 — Duplicate finder**: in flight on its own worktree. Size, then head/tail, then full BLAKE3; content-identical with the clone caveat.
 - **R3 — Admin scanning**: read restricted petals by scanning as root. Largest real win.
 - **R4 — APFS local snapshots**: list and purge; invisible in Finder, often tens of GB.
 - **R5 — Hidden space**: purgeable, other APFS volumes, still-hidden items as a virtual node.

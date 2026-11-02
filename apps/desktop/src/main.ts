@@ -567,6 +567,13 @@ window.addEventListener('keydown', (event) => {
     return
   }
 
+  // Cmd-L focuses the path field, the way a browser's location bar does.
+  if (event.key === 'l' && (event.metaKey || event.ctrlKey) && !overview.hidden) {
+    event.preventDefault()
+    el<HTMLInputElement>('manual-path').focus()
+    return
+  }
+
   if (event.key === 'Escape') {
     if (pendingDrill) {
       pendingDrill = null
@@ -737,6 +744,11 @@ async function boot(): Promise<void> {
   el<HTMLSelectElement>('cleanup-floor').addEventListener('change', () => void refreshCleanup())
   el<HTMLSelectElement>('cleanup-age').addEventListener('change', () => void refreshCleanup())
 
+  el<HTMLFormElement>('manual-path-form').addEventListener('submit', (event) => {
+    event.preventDefault()
+    void scanTypedPath()
+  })
+
   // The tree is a snapshot; deletions made outside the app are invisible until something
   // re-reads the disk. Regaining focus is the moment a person expects it to be current.
   if (bridge.isTauri) {
@@ -891,6 +903,30 @@ async function refreshCleanup(): Promise<void> {
     )
   } catch (error) {
     showError(`Cleanup report failed: ${String(error)}`)
+  }
+}
+
+/** Type a path and scan it: faster than any dialog when you already know the answer. */
+async function scanTypedPath(): Promise<void> {
+  const input = el<HTMLInputElement>('manual-path')
+  const raw = input.value.trim()
+  if (raw.length === 0) {
+    setStatus('Type a path to scan, for example /tmp')
+    return
+  }
+
+  // Only `~` is expanded. Environment variables are deliberately not: a path is data, and
+  // the shell's expansion rules are not ours to guess.
+  const expanded = raw === '~' ? homePath : raw.startsWith('~/') ? `${homePath}/${raw.slice(2)}` : raw
+
+  overview.hidden = true
+  await scanPath(expanded)
+
+  // A bad path leaves the user on an empty stage; bring the overview back with the text intact.
+  if (status.textContent?.startsWith('Scan failed')) {
+    overview.hidden = false
+    input.focus()
+    input.select()
   }
 }
 

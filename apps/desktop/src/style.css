@@ -650,3 +650,39 @@ body.dragging #sunburst {
 #delete-button {
   margin-left: 10px;
 }
+
+.manual-path {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.manual-path input {
+  flex: 1;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--separator);
+  color: var(--text);
+  border-radius: 9px;
+  padding: 9px 12px;
+  font: inherit;
+  user-select: text;
+}
+
+.manual-path input:focus {
+  outline: none;
+  border-color: rgba(10, 132, 255, 0.6);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.manual-path button {
+  appearance: none;
+  border: 0;
+  border-radius: 9px;
+  padding: 9px 16px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}

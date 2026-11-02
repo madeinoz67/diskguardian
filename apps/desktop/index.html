@@ -73,6 +73,17 @@
             <button id="scan-folder" type="button">Scan Folder…</button>
             <span class="hint">or drop a disk or folder anywhere in this window</span>
           </div>
+          <form id="manual-path-form" class="manual-path" autocomplete="off">
+            <input
+              id="manual-path"
+              type="text"
+              placeholder="…or type a path, e.g. /tmp or ~/Documents"
+              spellcheck="false"
+              autocapitalize="off"
+              aria-label="Path to scan"
+            />
+            <button id="manual-scan" type="submit">Scan path</button>
+          </form>
         </div>
       </div>
 
