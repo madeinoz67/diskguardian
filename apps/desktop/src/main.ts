@@ -331,7 +331,7 @@ function updateCollector(): void {
   collectAmount.textContent = formatBytes(state.collectedTotal)
   collectCaption.textContent =
     state.collectedCount === 0
-      ? 'drag a petal here, click + in the list, or hover a petal and press ⌫'
+      ? 'drag a petal here, click + in the list, or hover a petal and press ⌫ · double-click to reveal, Space to preview'
       : state.collectedCount === 1
         ? 'in the collector · 1 item'
         : `in the collector · ${state.collectedCount} items`
@@ -473,7 +473,11 @@ canvas.addEventListener('pointerleave', () => {
 })
 
 canvas.addEventListener('dblclick', (event) => {
-  void event
+  const node = sunburst.nodeAt(sunburst.arcAt(event.clientX, event.clientY))
+  if (node?.node_id == null) return
+  void bridge.reveal(state.scanId, node.node_id).catch((error: unknown) => {
+    showError(`Could not reveal in Finder: ${String(error)}`)
+  })
 })
 
 window.addEventListener('keydown', (event) => {
