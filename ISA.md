@@ -477,6 +477,19 @@ loses data.
 - **Walker benchmarked against `du`, not a target** (2026-10-30, `du -sh ~/Library` = 79.6 s vs our 87.9 s on 974,623 files). The walk is within 10% of the filesystem floor for that tree, so the original "10 seconds" C14 target was invented rather than measured. **Correction (2026-11-02):** the earlier note that our kernel time is "double `du`'s, from a redundant per-directory stat" does not survive scrutiny. `sys` is summed across all threads, and this walker is parallel while `du` is single-threaded, so the comparison says nothing about extra syscalls. There is one `stat` per directory and there is no free way to remove it (the parent's directory entry does not carry the child directory's block count). R2 is therefore closed as not-a-defect rather than fixed.
 - **Delete prunes, it does not rescan** (2026-10-30). The first working version re-scanned the whole volume after every delete, which is minutes on a real disk and made the feature feel broken. `Tree::forget` now removes the deleted nodes, recomputes ancestors and re-projects the view, so the flower updates in the same frame.
 - **Trash by default, Option for permanent** (2026-10-30). The button moves to the Trash; holding Option deletes permanently and always confirms. Trash runs over 5 GB also confirm.
+- **Favourites are Rust-owned data, not webview state** (2026-11-02, C28). A JSON store in the app
+  data directory, reached only through commands. `localStorage` is for UI preferences that degrade
+  to a default — the legend width — not for user data that must survive a relaunch, be testable
+  without a DOM, and stay out of reach of webview store corruption. Only Rust can turn a node id
+  into a path anyway.
+- **The canonical path is the favourites key** (2026-11-02). Writes canonicalise best-effort;
+  comparisons canonicalise both sides, because `path_of` returns literal walked paths while
+  everything filesystem-side canonicalises. That is the same mismatch that once made C17's delete
+  prune nothing, and here it would surface as duplicate rows. Case-folding is a stated limit: a
+  case-only variant can produce a second row, visibly, and never loses data.
+- **The star lives in the legend, not the top bar** (2026-11-02). A star on each directory row and
+  one on the heading for the current folder — which is also what makes the scan root starrable. No
+  modal, and no new row in a bar that is already dense.
 - **Admin scanning is prompt-per-session, not a signed helper** (2026-11-02; cadence set by the
   principal: "one per privileged session"). Merged to `main` as `b794c4d` from branch
   `r3-session-scanning` (`fd853b1`) — corrected 2026-11-02, because this entry claimed "not yet
