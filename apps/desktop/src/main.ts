@@ -8,6 +8,7 @@ import type { ViewNode, VolumeInfo } from './types'
 import { basename, gaugeFor, toneColor } from './overview'
 import { applyBranch, advance, findChildByName, partialView, startBranches } from './partial'
 import type { PartialBranch } from './partial'
+import { ADMIN_REFUSED_STATUS, adminStatus, isMacPlatform } from './admin'
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id)
@@ -29,6 +30,7 @@ const toast = el<HTMLElement>('toast')
 const toastText = el<HTMLElement>('toast-text')
 const overview = el<HTMLElement>('overview')
 const volumeList = el<HTMLElement>('volume-list')
+const adminAction = el<HTMLButtonElement>('admin-action')
 
 const sunburst = new Sunburst(canvas)
 
@@ -107,6 +109,56 @@ function setStatus(text: string): void {
   status.textContent = text
 }
 
+// ─── administrator measurement ───────────────────────────────────────────────────────
+//
+// Offered after a partial scan on macOS: one OS consent dialog, then the purple
+// petals are re-measured and grafted server-side. The frontend only ever sends the
+// scan id; it cannot name a path.
+
+let adminBeforeBytes = 0
+
+function offerAdminMeasurement(beforeBytes: number): void {
+  adminBeforeBytes = beforeBytes
+  adminAction.disabled = false
+  adminAction.hidden = false
+}
+
+function hideAdminMeasurement(): void {
+  adminAction.hidden = true
+  adminAction.disabled = false
+}
+
+async function measureRestricted(): Promise<void> {
+  if (!state.scanId) return
+  adminAction.disabled = true
+  setStatus('Measuring restricted areas… the system will ask for your administrator password')
+  const unsubscribe = await bridge.onAdminProgress((p) =>
+    setStatus(`Measuring… ${p.measured} of ${p.total} areas done`),
+  )
+  try {
+    const report = await bridge.scanRestricted(state.scanId)
+    unsubscribe()
+    // The backend grafted the measured subtrees and returned a fresh whole-tree view.
+    state.stack = [{ nodeId: null, view: report.view }]
+    sunburst.setView(report.view)
+    renderCrumbs()
+    renderLegend()
+    setStatus(adminStatus(Math.max(0, report.bytes - adminBeforeBytes), report.still_restricted))
+    hideAdminMeasurement()
+  } catch (error) {
+    unsubscribe()
+    const message = String(error)
+    adminAction.disabled = false
+    if (message.includes('declined')) {
+      setStatus(ADMIN_REFUSED_STATUS)
+    } else {
+      setStatus(`Administrator measurement failed: ${message}`)
+    }
+  }
+}
+
+adminAction.addEventListener('click', () => void measureRestricted())
+
 /**
  * Something the user must see. The first version of this reported failures only in the
  * status line, which made a broken control look identical to a working one.
@@ -120,6 +172,7 @@ function showError(text: string): void {
 
 async function scanPath(path: string): Promise<void> {
   overview.hidden = true
+  hideAdminMeasurement()
   setStatus('Scanning…')
   document.body.classList.add('scanning')
   let unsubscribe: (() => void) | null = null
@@ -168,6 +221,11 @@ async function scanPath(path: string): Promise<void> {
         result.duration_ms / 1000
       ).toFixed(1)}s${restrictedNote}`,
     )
+    // The affordance appears only where a runner exists (macOS) and only when there
+    // is something to measure.
+    if (result.partial && isMacPlatform(navigator.userAgent)) {
+      offerAdminMeasurement(result.bytes)
+    }
   } catch (error) {
     stopPartial()
     setStatus(`Scan failed: ${String(error)}`)
@@ -536,6 +594,7 @@ let homePath = ''
 async function showOverview(): Promise<void> {
   overview.hidden = false
   hoverLabel.hidden = true
+  hideAdminMeasurement()
   setStatus('Choose a disk or folder to scan')
 
   let volumes: VolumeInfo[] = []

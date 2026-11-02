@@ -13,6 +13,10 @@ pub struct Scan {
 pub struct AppState {
     pub scans: Mutex<HashMap<String, Scan>>,
     pub next_scan: Mutex<u64>,
+    /// Test seam for administrator measurement: when set, `scan_restricted` runs this
+    /// launcher instead of raising the real osascript dialog. Production leaves it
+    /// `None`; the protocol above the launcher is identical either way.
+    pub admin_launch: Mutex<Option<crate::admin::Launch>>,
 }
 
 impl AppState {

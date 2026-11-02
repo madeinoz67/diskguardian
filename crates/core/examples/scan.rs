@@ -6,9 +6,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 fn main() {
-    let target = std::env::args().nth(1).unwrap_or_else(|| {
-        std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
-    });
+    let target = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".to_string()));
     let path = PathBuf::from(&target);
 
     let started = Instant::now();

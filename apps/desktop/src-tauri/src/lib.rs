@@ -1,3 +1,4 @@
+pub mod admin;
 mod commands;
 mod platform;
 pub mod state;
@@ -27,6 +28,7 @@ pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             commands::delete_collected,
             commands::reveal,
             commands::quicklook,
+            admin::scan_restricted,
         ])
 }
 

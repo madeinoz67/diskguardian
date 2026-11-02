@@ -41,7 +41,17 @@ pub enum ScanError {
 pub struct ScanOptions {
     /// Optional cap on files visited, for a fast path over enormous volumes.
     pub max_entries: Option<u64>,
+    /// Optional wall-clock deadline for the whole walk. Past it, every directory still
+    /// to enter is returned as a `Restricted` node with [`DEADLINE_NOTE`] — the same
+    /// unmeasured-is-reported shape as a permission failure, never a silent zero.
+    /// The caller cannot rely on killing the process (an elevated walker belongs to
+    /// root), so the walker enforces its own budget, exactly like `max_entries`.
+    pub deadline: Option<Instant>,
 }
+
+/// The `note` a deadline-hit directory carries. Public so the caller that set the
+/// deadline can recognise its own budget in the result.
+pub const DEADLINE_NOTE: &str = "deadline reached";
 
 /// One finished child of the scan root, reported the moment it completes so a UI can
 /// draw it without waiting for the whole tree.
@@ -75,6 +85,7 @@ pub fn scan_with_progress(
     let builder = Builder {
         seen: Mutex::new(HashSet::new()),
         max_entries: opts.max_entries,
+        deadline: opts.deadline,
         visited: AtomicU64::new(0),
         errors: AtomicU64::new(0),
         progress,
@@ -160,6 +171,7 @@ fn flatten(scanned: Scanned, out: &mut Vec<Node>, parent: Option<NodeId>) -> Nod
 struct Builder {
     seen: Mutex<HashSet<(u64, u64)>>,
     max_entries: Option<u64>,
+    deadline: Option<Instant>,
     visited: AtomicU64,
     errors: AtomicU64,
     progress: Option<ProgressFn>,
@@ -178,6 +190,16 @@ impl Builder {
     }
 
     fn walk_dir(&self, path: &Path, name: String, depth: usize) -> Scanned {
+        // The budget is checked before the directory is opened, so a spent deadline
+        // costs no syscalls and produces the same Restricted shape as a refusal.
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            return restricted(name, path, DEADLINE_NOTE.to_string());
+        }
+
         let mut children: Vec<Scanned> = Vec::new();
         let mut own_bytes = 0u64;
         let mut partial = false;
@@ -186,20 +208,7 @@ impl Builder {
             Ok(rd) => rd,
             Err(err) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                // A directory we cannot enter still occupies blocks of its own.
-                let own_bytes = fs::symlink_metadata(path).map_or(0, |m| allocation(&m));
-                return Scanned {
-                    name,
-                    kind: NodeKind::Restricted,
-                    own_bytes,
-                    total_bytes: own_bytes,
-                    file_count: 0,
-                    partial: true,
-                    link_skipped: false,
-                    missing: false,
-                    note: Some(err.to_string()),
-                    children: Vec::new(),
-                };
+                return restricted(name, path, err.to_string());
             }
         };
 
@@ -359,6 +368,26 @@ impl Builder {
             return true;
         };
         self.visited.fetch_add(1, Ordering::Relaxed) < limit
+    }
+}
+
+/// A directory that could not be entered: still occupies blocks of its own, still
+/// reported, still flags every ancestor partial. Produced by permission failures and
+/// by an expired deadline alike.
+fn restricted(name: String, path: &Path, note: String) -> Scanned {
+    // A directory we cannot enter still occupies blocks of its own.
+    let own_bytes = fs::symlink_metadata(path).map_or(0, |m| allocation(&m));
+    Scanned {
+        name,
+        kind: NodeKind::Restricted,
+        own_bytes,
+        total_bytes: own_bytes,
+        file_count: 0,
+        partial: true,
+        link_skipped: false,
+        missing: false,
+        note: Some(note),
+        children: Vec::new(),
     }
 }
 

@@ -16,11 +16,11 @@ pub fn reveal(path: &Path) -> Result<(), String> {
             .arg(path)
             .status()
             .map_err(|e| format!("could not run open: {e}"))?;
-        return if status.success() {
+        if status.success() {
             Ok(())
         } else {
             Err(format!("open -R exited with {status}"))
-        };
+        }
     }
 
     #[cfg(windows)]
@@ -52,12 +52,12 @@ pub fn reveal(path: &Path) -> Result<(), String> {
 pub fn quicklook(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        return Command::new("qlmanage")
+        Command::new("qlmanage")
             .arg("-p")
             .arg(path)
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("could not run qlmanage: {e}"));
+            .map_err(|e| format!("could not run qlmanage: {e}"))
     }
 
     #[cfg(windows)]

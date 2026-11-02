@@ -5,6 +5,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type {
+  AdminProgress,
+  AdminScanReport,
   BranchDone,
   CollectState,
   DeleteReport,
@@ -120,6 +122,32 @@ export async function reveal(scanId: string, nodeId: number): Promise<void> {
 export async function quicklook(scanId: string, nodeId: number): Promise<void> {
   if (!isTauri) return
   await invoke('quicklook', { scanId, nodeId })
+}
+
+/**
+ * Measure the restricted areas of a stored scan with one OS consent dialog. The
+ * command takes a scan id and nothing else: the paths are derived on the Rust side.
+ */
+export async function scanRestricted(scanId: string): Promise<AdminScanReport> {
+  if (!isTauri) {
+    // The demo tree carries one restricted petal; "measuring" it is a no-op that keeps
+    // the browser demo shape-complete without pretending a dialog appeared.
+    return {
+      patched: 1,
+      still_restricted: 0,
+      bytes: demoNodes[0]?.bytes ?? 0,
+      files: 0,
+      view: demoView(0),
+    }
+  }
+  return invoke<AdminScanReport>('scan_restricted', { scanId })
+}
+
+/** Per-area progress while an administrator pass runs. */
+export async function onAdminProgress(handler: (p: AdminProgress) => void): Promise<() => void> {
+  if (!isTauri) return () => {}
+  const unlisten = await listen<AdminProgress>('admin-progress', (event) => handler(event.payload))
+  return unlisten
 }
 
 // ─── demo data ────────────────────────────────────────────────────────────────────────

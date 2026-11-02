@@ -54,18 +54,33 @@ pub fn protected_roots() -> Vec<PathBuf> {
 
     #[cfg(windows)]
     {
-        ["SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"]
-            .iter()
-            .filter_map(|key| std::env::var(key).ok())
-            .map(PathBuf::from)
-            .collect()
+        [
+            "SystemRoot",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramData",
+        ]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .map(PathBuf::from)
+        .collect()
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         [
-            "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/lib", "/lib", "/lib64", "/boot",
-            "/etc", "/dev", "/proc", "/sys",
+            "/bin",
+            "/sbin",
+            "/usr/bin",
+            "/usr/sbin",
+            "/usr/lib",
+            "/lib",
+            "/lib64",
+            "/boot",
+            "/etc",
+            "/dev",
+            "/proc",
+            "/sys",
         ]
         .iter()
         .map(PathBuf::from)

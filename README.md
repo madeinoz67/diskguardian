@@ -35,9 +35,15 @@ Builds a macOS app bundle from source:
 
 ```bash
 bun install --cwd apps/desktop
-bun x --cwd apps/desktop tauri build
-# → apps/desktop/src-tauri/target/release/bundle/macos/DiskGuardian.app
+bun run --cwd apps/desktop tauri:build
+# → target/release/bundle/macos/DiskGuardian.app  (workspace root target/)
 ```
+
+`tauri:build` first stages the `diskguardian-admin` measurement helper for the
+bundler (Tauri's `externalBin` wants it prebuilt, target-triple-suffixed, under
+`src-tauri/binaries/`). If you only want `cargo build`/`test`/`clippy` on the whole
+workspace, run `bun run --cwd apps/desktop stage:admin` once first: the app crate's
+build script fails until the staged helper exists.
 
 Requires Rust (stable), Bun, and the Xcode command line tools.
 
@@ -61,6 +67,9 @@ crates/core/          pure Rust, no UI: the scanning engine
   view.rs             pruning for display: big children kept, long tail merged
   collect.rs          the collector, with overlap counted once
   delete.rs           guarded deletion; Trash by default, permanent on request
+crates/admin/         diskguardian-admin: one-shot read-only helper behind the
+                     administrator dialog (job file in, results file out; measures,
+                     never deletes)
 apps/desktop/
   src-tauri/          the Tauri shell: IPC commands, Finder reveal, Quick Look
   src/                the sunburst: layout maths, canvas renderer, interaction
@@ -79,11 +88,34 @@ Deletion is the only destructive thing here, so it is the most constrained:
 - The default is the macOS Trash: you can change your mind until it is emptied.
 - Deleting more than 5 GB requires explicit confirmation.
 
+## Administrator measurement
+
+Some areas (other users' homes, most of `/Library`, parts of `/private/var`) cannot be
+read with your own permissions, and DiskGuardian draws them as purple "restricted"
+petals rather than pretending they are empty. After such a scan, the status bar offers
+**Measure restricted areas…** — one pass, one system password dialog, and those petals
+are re-measured and redrawn at their real sizes.
+
+What that pass is, plainly:
+
+- **The dialog belongs to macOS.** The app never sees, holds, or caches your password.
+  One prompt per pass — all restricted areas are batched into a single job — and no
+  privileged process exists between passes.
+- **The privileged side measures; it never deletes.** A small helper binary walks the
+  restricted paths read-only and writes the numbers back. It contains no deletion code
+  at all, and deletion continues to run unprivileged, behind the same guard as always.
+  Seeing a protected folder is never the same as being able to delete it.
+- **You may still have purple petals afterwards.** Root does not bypass macOS privacy
+  controls (TCC), so folders like `~/Library/Mail` may stay restricted until DiskGuardian
+  is granted Full Disk Access. Whatever could not be measured is reported with a count,
+  never silently dropped.
+
 ## Status
 
-Early. The core loop works end to end on macOS: scan, draw, drill, collect, delete.
+Early. The core loop works end to end on macOS: scan, draw, drill, collect, delete, and
+administrator measurement of restricted areas.
 
-Not yet: admin/root scanning, cloud accounts (Dropbox, Drive, OneDrive, Box), APFS local
+Not yet: cloud accounts (Dropbox, Drive, OneDrive, Box), APFS local
 snapshots, disk images, network volumes, and Windows/Linux builds.
 
 ## Licence
