@@ -1591,11 +1591,190 @@ mod favourites {
         );
     }
 
+    /// The recovery notice describes the store's current condition, not a past event:
+    /// it used to stand for the rest of the process, still saying the list "could not
+    /// be read" over a healthy store the user had already starred something new into.
+    /// It clears on the first later command whose read validates; the aside file on
+    /// disk is what the user keeps, and that fact does not need shouting forever.
+    #[test]
+    fn the_recovery_notice_clears_once_a_later_command_validates_the_store() {
+        let dir = store_dir();
+        fs::write(dir.join("favourites.json"), b"{ this is not json").expect("garbage");
+
+        let app = build();
+        set_store(&app, &dir);
+        let view = webview(&app);
+
+        let report = call(&view, "favourites", serde_json::json!({})).expect("the report answers");
+        assert!(
+            !report["notice"].as_str().unwrap_or_default().is_empty(),
+            "the recovery is visible text, never a silent empty list: {report}"
+        );
+
+        // The user stars something new. The command reads the store first; that read
+        // validates (the recovery renamed the unreadable file aside, so there is
+        // nothing on disk left to misread), and the star writes through the fresh
+        // store.
+        let holder = tempfile::tempdir().expect("tempdir");
+        let target = holder.path().join("starred-after-recovery");
+        fs::create_dir(&target).expect("mkdir");
+        set_favourite(&view, &target.display().to_string(), true).expect("star");
+
+        let after = call(&view, "favourites", serde_json::json!({})).expect("favourites");
+        assert_eq!(
+            after["notice"],
+            serde_json::Value::Null,
+            "the notice reports the current condition, and the store is healthy: {after}"
+        );
+        assert_eq!(
+            after["favourites"].as_array().expect("entries").len(),
+            1,
+            "the new star is listed: {after}"
+        );
+
+        // What the user keeps is the file, not the banner: the old list stays
+        // preserved beside the store.
+        let aside: Vec<String> = fs::read_dir(&dir)
+            .expect("store dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("favourites.json.corrupt-"))
+            .collect();
+        assert_eq!(
+            aside.len(),
+            1,
+            "the previous list is still kept beside the store: {aside:?}"
+        );
+    }
+
+    /// A scan whose root the test later deletes, with one child found by name — the
+    /// shape the second refutation pass drove. The tree lives in memory and nothing
+    /// flags its nodes missing (only `revalidate` does that), so after the deletion
+    /// the legend's unstar still reaches the store with `path_of`'s walked spelling
+    /// `/var/folders/…`, while the star was keyed `/private/var/folders/…`.
+    /// macOS-gated with the tests that use it: on a platform whose temp root is
+    /// already canonical the two spellings are one string.
+    #[cfg(target_os = "macos")]
+    fn scan_that_vanishes(
+        app: &tauri::App<MockRuntime>,
+        webview: &tauri::WebviewWindow<MockRuntime>,
+    ) -> (String, u64, PathBuf) {
+        let holder = tempfile::tempdir().expect("tempdir");
+        fs::create_dir(holder.path().join("sub")).expect("mkdir");
+        let walked = holder.path().to_path_buf();
+        let tree = diskguardian_core::scan(holder.path(), &Default::default()).expect("scan");
+        let root = tree.root as u64;
+        // Leak the handle: the test removes the folder by path at its chosen moment.
+        std::mem::forget(holder);
+        let scan_id = app.state::<AppState>().insert(tree);
+        let child = child_named(webview, &scan_id, root, "sub");
+        (scan_id, child, walked)
+    }
+
+    /// The refutation's scenario, one step further than the test above: the folder is
+    /// deleted between the star and the unstar. `canonical` fell back to the literal
+    /// on both sides then — the store's `/private/var/…` never equalled the legend's
+    /// `/var/…` — so the unstar answered `Ok` with the row silently retained. The
+    /// canonical key must not depend on the leaf existing.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unstarring_a_vanished_folder_from_the_legend_empties_the_list() {
+        let app = build();
+        set_store(&app, &store_dir());
+        let webview = webview(&app);
+        let (scan_id, child, walked) = scan_that_vanishes(&app, &webview);
+
+        let stored = star_node(&webview, &scan_id, child, true).expect("star from the legend");
+        let stored_path = stored[0].as_str().expect("the store's own string");
+        assert!(
+            stored_path.starts_with("/private/var/"),
+            "premise: the store keyed the star under /private/var ({stored_path})"
+        );
+        assert!(
+            walked.starts_with("/var/"),
+            "premise: the tree walks /var, so the unstar passes the other spelling ({})",
+            walked.display()
+        );
+
+        fs::remove_dir_all(&walked).expect("the folder is deleted out from under the app");
+
+        let after = star_node(&webview, &scan_id, child, false).expect("unstar must answer");
+        assert!(
+            after.as_array().expect("list").is_empty(),
+            "the legend's unstar removed the vanished folder's row: {after}"
+        );
+
+        let report = call(&webview, "favourites", serde_json::json!({})).expect("favourites");
+        assert!(
+            report["favourites"].as_array().expect("entries").is_empty(),
+            "and it stayed removed: {report}"
+        );
+    }
+
+    /// The same vanish, then unstar and re-star: the literal mismatch left the unstar
+    /// a no-op and the re-star a second row, and the front page showed both rows with
+    /// `exists: false`. The star must also stay lit over the vanished folder — a
+    /// hollow star over a favourite the store still holds reads as "not starred".
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unstar_then_restar_of_a_vanished_folder_leaves_one_row() {
+        let app = build();
+        set_store(&app, &store_dir());
+        let webview = webview(&app);
+        let (scan_id, child, walked) = scan_that_vanishes(&app, &webview);
+
+        let stored = star_node(&webview, &scan_id, child, true).expect("star from the legend");
+        let stored_path = stored[0]
+            .as_str()
+            .expect("the store's own string")
+            .to_string();
+        assert!(
+            stored_path.starts_with("/private/var/"),
+            "premise: the store keyed the star under /private/var ({stored_path})"
+        );
+
+        fs::remove_dir_all(&walked).expect("the folder is deleted out from under the app");
+
+        let marks = call(
+            &webview,
+            "favourite_marks",
+            serde_json::json!({ "scanId": &scan_id, "nodeId": child }),
+        )
+        .expect("marks");
+        assert_eq!(
+            marks["self_"],
+            serde_json::Value::Bool(true),
+            "the star the user clicked stays lit over the vanished folder: {marks}"
+        );
+
+        star_node(&webview, &scan_id, child, false).expect("the unstar answers");
+        let re_starred = star_node(&webview, &scan_id, child, true).expect("the re-star answers");
+        assert_eq!(
+            re_starred.as_array().expect("list").len(),
+            1,
+            "unstar then re-star of one folder leaves exactly one row: {re_starred}"
+        );
+
+        let report = call(&webview, "favourites", serde_json::json!({})).expect("favourites");
+        let entries = report["favourites"].as_array().expect("entries");
+        assert_eq!(entries.len(), 1, "one row on the front page: {report}");
+        assert_eq!(
+            entries[0]["path"].as_str(),
+            Some(stored_path.as_str()),
+            "it is the canonical spelling the first star wrote: {report}"
+        );
+        assert_eq!(
+            entries[0]["exists"],
+            serde_json::Value::Bool(false),
+            "the folder is still gone, and the row says so: {report}"
+        );
+    }
+
     /// C28's falsifier, replayed across relaunches: star the real spelling, let the
-    /// folder vanish, star the alias (stored as a literal because nothing is there to
-    /// canonicalise), restore the folder — the store now holds two spellings of one
-    /// existing folder. Loading is where they must reconcile: normalise every key,
-    /// keep the first of each.
+    /// folder vanish, star the alias (its leaf is then a dangling symlink, so its key
+    /// rides the surviving fixture base with "alias" appended lexically), restore the
+    /// folder — the store now holds two spellings of one existing folder. Loading is
+    /// where they must reconcile: normalise every key, keep the first of each.
     #[cfg(unix)]
     #[test]
     fn two_spellings_of_one_restored_folder_collapse_to_one_row() {
@@ -1610,8 +1789,8 @@ mod favourites {
         drop(first_view);
         drop(first);
 
-        // The folder vanishes; the alias spelling now canonicalises to nothing, so it
-        // is stored as the literal.
+        // The folder vanishes; the alias is a dangling symlink, so its key rides the
+        // fixture base (which survives) with "alias" appended lexically.
         fs::remove_dir_all(&real).expect("remove the folder");
         let second = build();
         set_store(&second, &dir);

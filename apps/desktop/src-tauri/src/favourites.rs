@@ -8,12 +8,16 @@
 //!
 //! Path identity is the canonical form — the C17 lesson. `Tree::path_of` returns the
 //! literal walked path while the deletion guard canonicalises, and comparing the two
-//! literally once made delete prune nothing. Favourites key on `fs::canonicalize`
-//! best-effort at write, canonicalise both sides at comparison, canonicalise the
-//! removal key too (the legend's unstar passes the walked spelling, not the store's),
-//! and reconcile stored spellings when the store loads — so `/tmp/x` and
-//! `/private/tmp/x` are one entry at every door, including one that was stored as a
-//! literal while its folder was gone and has since come back.
+//! literally once made delete prune nothing. Favourites key on one canonical form at
+//! every door — write, comparison, removal and the load-time reconcile all call the
+//! same `canonical` — so `/tmp/x` and `/private/tmp/x` are one entry, and the form
+//! does not depend on the leaf existing: when the folder is gone, the nearest
+//! surviving ancestor carries the canonicalisation and the missing components ride
+//! along lexically. The C28 refutation that required this: with a fallback to the
+//! literal, a deleted `/var/folders/…` child left the store holding
+//! `/private/var/…` while the legend's unstar passed `/var/…` — both sides fell
+//! back, the literals differed, the unstar answered `Ok` having removed nothing and
+//! the re-star duplicated the row.
 //!
 //! **Stated limit:** `fs::canonicalize` does not case-fold on macOS, so `/Users/NAME/x`
 //! and `/Users/name/x` remain two entries on a case-insensitive volume. This can only
@@ -76,7 +80,9 @@ pub struct Favourites {
     /// Whether a healthy read of the store file has happened this process. One read is
     /// the authority: re-reading on every command would discard any change a failed
     /// write left in the list, which is exactly what the retention in `set` promises
-    /// not to do. An unreadable store leaves this `false`, so the next command retries.
+    /// not to do. An unreadable store leaves this `false`, so the next command retries
+    /// — and so does a recovery, which is a failed read plus a rename, never a healthy
+    /// read: the recovery notice stands only until a later command's read validates.
     loaded: bool,
     /// Set when a corrupt store was recovered this load.
     notice: Option<String>,
@@ -124,7 +130,13 @@ impl Favourites {
     /// - `NotFound` is a fresh machine's first read: an empty store, no drama.
     /// - Malformed JSON or an unknown version is corruption: the file is renamed aside,
     ///   the list starts empty, the notice says so (C27 — a failed read is never
-    ///   allowed to read as "no favourites").
+    ///   allowed to read as "no favourites"). The notice describes the store's current
+    ///   condition, not the past event: a recovery is not a healthy read (`loaded`
+    ///   stays false), so the next command reads once more. With the corrupt file
+    ///   renamed aside, that read finds a fresh machine's emptiness — healthy — and
+    ///   the notice clears; if the rename failed and the file is still there, it meets
+    ///   the same corruption and recovers again, and the notice stays because the
+    ///   condition it names is still true.
     /// - Any other read failure (permissions, I/O) is *not* corruption: the file is
     ///   left untouched, `unreadable` is set so mutations refuse, and the next command
     ///   retries. Renaming a good file aside because of a permission blip once
@@ -149,12 +161,21 @@ impl Favourites {
                     self.loaded = true;
                 }
                 _ => {
+                    // A recovery is not a healthy read — nothing this process has read
+                    // has been understood. `loaded` stays false so the next command
+                    // reads once more: that read validates the fresh state (clearing
+                    // the notice) or, when a failed rename left the corrupt file in
+                    // place, meets the same corruption and recovers again — at most
+                    // one attempt per command.
                     self.recover(&path);
-                    self.loaded = true;
                 }
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 self.paths.clear();
+                // No file is the healthy fresh-machine state — including the read
+                // after a recovery renamed the unreadable one aside, which is the
+                // read that clears the recovery notice.
+                self.notice = None;
                 self.unreadable = None;
                 self.loaded = true;
             }
@@ -175,6 +196,10 @@ impl Favourites {
     }
 
     /// A store that cannot be understood is preserved beside a fresh one and reported.
+    /// The recovery is an event, but the notice is a condition: `load` leaves the
+    /// store unread (`loaded` stays false), so the next command re-reads and the
+    /// notice clears only when that read validates. What outlives the notice is the
+    /// aside file — the previous list kept on disk, not shouted forever.
     fn recover(&mut self, path: &Path) {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -249,20 +274,47 @@ impl Favourites {
     }
 }
 
-/// The store's canonical form of a path, best-effort: the literal string when the
-/// folder has vanished between the click and the write (C25's lesson — readability
-/// belongs to the stat, never to validation).
+/// The store's canonical form of a path, best-effort: the deepest existing ancestor,
+/// canonicalised, with the remaining components appended lexically. When the folder
+/// is there this is plain `fs::canonicalize` (one stat); when it has vanished, the
+/// nearest surviving ancestor carries the canonicalisation — `/var/folders/…/sub`
+/// and `/private/var/folders/…/sub` of a deleted folder share the surviving
+/// `/var/folders`, so both key as `/private/var/folders/…/sub` and the legend's
+/// unstar still removes a row the store holds while the folder is gone (C28's own
+/// falsifier; a literal fallback made that unstar a silent no-op and the re-star a
+/// duplicate). Costs one stat per ancestor tried, bounded by the path's depth, and
+/// the drawn children of a marks query exist — so the common case pays exactly what
+/// it always did. Two spellings of a missing folder stay two keys when they differ
+/// at or below the deepest surviving ancestor (the module's case-variant limit is
+/// the reachable case); when no ancestor exists at all — an empty or relative
+/// string — the literal is returned unchanged.
 fn canonical(path: &str) -> String {
-    std::fs::canonicalize(path)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| path.to_string())
+    let original = Path::new(path);
+    for ancestor in original.ancestors() {
+        if let Ok(resolved) = std::fs::canonicalize(ancestor) {
+            // `ancestors()` yields literal prefixes of the path, so the strip cannot
+            // fail. The empty tail — the folder itself existed — is returned as-is:
+            // `join("")` would append a trailing separator, and the store compares
+            // strings.
+            let tail = original
+                .strip_prefix(ancestor)
+                .expect("an ancestor is a prefix of its path");
+            if tail.as_os_str().is_empty() {
+                return resolved.display().to_string();
+            }
+            return resolved.join(tail).display().to_string();
+        }
+    }
+    path.to_string()
 }
 
-/// Reconcile stored spellings: re-key each to its canonical form where the folder
-/// exists again, then keep the first of each. A literal stored while its folder was
-/// gone and an older canonical spelling of the same folder are then one row, which is
-/// the C28 promise; two different missing folders stay two rows, because while they
-/// are gone nothing can prove them the same.
+/// Reconcile stored spellings: re-key each to its canonical form, then keep the first
+/// of each. Because the canonical form rides the nearest surviving ancestor, this
+/// collapses spellings whether the folder is back, still gone, or never existed — a
+/// literal written while its folder was gone and an older canonical spelling of the
+/// same folder are one row, the C28 promise. Two different missing folders stay two
+/// rows whenever they differ at or below the deepest surviving ancestor; while they
+/// are gone, nothing can prove them the same.
 fn reconcile(paths: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     paths
