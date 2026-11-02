@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 22/28
+progress: 23/28
 iteration: 1
 created: 2026-10-30
 ---
@@ -432,7 +432,7 @@ path is proven through the injected runner and the real refusal branch is inferr
 tmutil's own `requires root privileges` string. The first real purge is the observation that
 closes that gap.
 
-### C28 — Favourite folders persist, and a favourite that has gone says so  `[ ]`
+### C28 — Favourite folders persist, and a favourite that has gone says so  `[x]`
 Any folder visible in a scan can be starred from the contents list, and the current folder from
 the list's heading, without a dialog; whether a node is a favourite is resolved from its path on
 the Rust side, never guessed in the UI. Favourites persist in the app's own data directory as
@@ -454,6 +454,29 @@ surface.
 than asked (2026-11-02): favourites sit above **every** row, home and Trash included, and a
 case-only path difference is an accepted limit — it can produce a second row, visibly, and never
 loses data.
+
+**Closed 2026-11-02, on four refutation passes and a rebuilt bundle.** Evidence: `cargo test -p
+diskguardian-app --test ipc favourites` — 18 tests, including persistence over one store file,
+star-twice as a no-op, `/tmp` and `/private/tmp` collapsing, a vanished favourite returned with
+`exists: false`, the legend's unstar emptying the list *after the folder is gone*, and unstar-then-
+re-star leaving one row; `bun test` on the model and on a source-level markup guard. Three
+discriminations RED-checked by hand (duplicate refusal, canonicalisation, the gone-folder ancestor
+walk), each failing when its mechanism was neutralised. On the built app: the favourites block above
+every row with Scan and unstar; the star click not moving the view; a favourite surviving a real quit
+and relaunch as `/private/tmp/...` from a `/tmp` scan; and a vanished favourite rendering "not on this
+disk right now" with its Scan disabled. Screenshots `/tmp/dg-r8-overview.png`, `/tmp/dg-r8-legend.png`,
+`/tmp/dg-r8-missing2.png`, `/tmp/dg-r8-final.png`.
+**What the passes cost, and why it was worth it.** The first build passed every gate and all three
+pre-committed discriminations, and still shipped a legend unstar that silently did nothing. The
+second pass found it; the third found that the repair worked only while the folder existed — the
+increment's own headline scenario — and that re-starring then produced the duplicate row C28 names as
+its falsifier. Two regression tests were green with the defect live because their fixtures kept the
+folder alive. The fix that ended it is a single canonicalisation chokepoint the writer, the
+comparator, the remover and the load-time reconcile all call, so partial application is not
+expressible.
+**Stated limits:** a case-only path difference can still produce a second row (visible, never data
+lost), and `tauri.conf.json` still ships `csp: null` — the hover-label injection is fixed, but CSP
+hardening is its own decision and was deliberately not folded in.
 
 ## Test Strategy
 
