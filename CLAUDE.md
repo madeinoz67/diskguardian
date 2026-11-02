@@ -67,6 +67,12 @@ cd apps/desktop && bun run tauri:build   # the bundle
   Nothing about that was visible from either side until the tests went red.
 - **Stage explicit paths, never `git add -A`,** in any tree that another process may be
   writing to.
+- **Non-trivial work runs the `increment` loop** (`.claude/skills/increment/SKILL.md`):
+  design, build RED-first, vet independently, refute with the agent lanes, measure, merge.
+  The lanes are not optional garnish — on 2026-11-02 four fixes went straight from gates to
+  merge without them, and three independent review passes then found sixteen findings,
+  including a fix that did not fix its own defect. Gates prove it compiles; they never try
+  to break it.
 
 ## Memory
 
