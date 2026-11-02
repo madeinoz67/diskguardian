@@ -336,9 +336,19 @@ fn view_merges_the_long_tail_into_smaller_objects() {
         aggregate.aggregated_count
     );
     let child_bytes: u64 = root.children.iter().map(|&c| view[c as usize].bytes).sum();
-    assert_eq!(
-        child_bytes, root.bytes,
-        "the children of a view node must sum to it"
+    // Not equality: a node's total includes its OWN allocation — the directory's metadata
+    // blocks — which no child represents. On APFS that is 0, so equality happened to hold on
+    // macOS; on ext4 and NTFS it is a block, and the assertion failed on CI while the code
+    // was right. The honest invariant is that children never exceed the parent.
+    assert!(
+        child_bytes <= root.bytes,
+        "children ({child_bytes}) must not exceed their parent ({})",
+        root.bytes
+    );
+    assert!(
+        root.bytes - child_bytes < 64 * 1024,
+        "the gap should be the node's own blocks, not missing children: gap {}",
+        root.bytes - child_bytes
     );
 }
 
