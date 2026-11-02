@@ -282,11 +282,15 @@ function renderLegend(): void {
     name.textContent = label
     // The column is narrow and names are long: never leave the full name unreachable.
     name.title = label
-    row.title = label
+    row.title = node.missing ? `${label} — deleted, rescan to clear` : label
+    if (node.missing) {
+      name.classList.add('missing')
+      row.classList.add('missing')
+    }
 
     const size = document.createElement('span')
     size.className = 'legend-size'
-    size.textContent = formatBytes(node.bytes)
+    size.textContent = node.missing ? 'deleted' : formatBytes(node.bytes)
 
     row.append(dot, name, size)
 

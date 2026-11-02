@@ -21,6 +21,8 @@ pub struct ViewNode {
     /// How many source nodes were merged into this one (0 for real nodes).
     pub aggregated_count: u32,
     pub partial: bool,
+    /// Gone from disk since the scan; the UI strikes it through.
+    pub missing: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,28 +49,39 @@ impl Default for ViewOptions {
 #[must_use]
 pub fn build_view(tree: &Tree, root: NodeId, opts: &ViewOptions) -> Vec<ViewNode> {
     let mut out: Vec<ViewNode> = Vec::new();
-    push_node(tree, root, 0, opts, &mut out);
+    push_node(tree, root, 0, opts, 0, &mut out);
     out
 }
+
+/// A deleted node is worth nothing, which would make it invisible. Give it a sliver wide
+/// enough to see and strike through, so the user can tell what they just did.
+const MISSING_FLOOR_DIVISOR: u64 = 200;
 
 fn push_node(
     tree: &Tree,
     id: NodeId,
     depth: u32,
     opts: &ViewOptions,
+    floor: u64,
     out: &mut Vec<ViewNode>,
 ) -> u32 {
     let node = tree.node(id);
     let index = out.len() as u32;
+    let bytes = if node.missing {
+        node.total_bytes.max(floor)
+    } else {
+        node.total_bytes
+    };
     out.push(ViewNode {
         index,
         node_id: Some(id as u64),
         name: node.name.clone(),
-        bytes: node.total_bytes,
+        bytes,
         kind: node.kind.as_str(),
         children: Vec::new(),
         aggregated_count: 0,
         partial: node.partial,
+        missing: node.missing,
     });
 
     if depth >= opts.max_depth || node.children.is_empty() {
@@ -84,6 +97,7 @@ fn push_node(
     });
 
     let parent_bytes = node.total_bytes.max(1);
+    let child_floor = (parent_bytes / MISSING_FLOOR_DIVISOR).max(1);
     let mut kept: Vec<NodeId> = Vec::new();
     let mut covered: u64 = 0;
 
@@ -99,7 +113,7 @@ fn push_node(
 
     let mut child_indices: Vec<u32> = kept
         .iter()
-        .map(|&kid| push_node(tree, kid, depth + 1, opts, out))
+        .map(|&kid| push_node(tree, kid, depth + 1, opts, child_floor, out))
         .collect();
 
     let aggregated = kids.len().saturating_sub(kept.len());
@@ -119,6 +133,7 @@ fn push_node(
                 children: Vec::new(),
                 aggregated_count: aggregated as u32,
                 partial: false,
+                missing: false,
             });
             child_indices.push(agg_index);
         }

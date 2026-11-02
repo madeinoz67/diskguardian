@@ -7,6 +7,8 @@ export interface ViewNode {
   children: number[]
   aggregated_count: number
   partial: boolean
+  /** Gone from disk since the scan: drawn struck through, worth zero. */
+  missing: boolean
 }
 
 export interface ScanResponse {

@@ -57,9 +57,9 @@ describe('progressive paint', () => {
 
 describe('deferred drill', () => {
   const view = [
-    { index: 0, node_id: 1, name: 'root', bytes: 10, kind: 'dir' as const, children: [1, 2], aggregated_count: 0, partial: false },
-    { index: 1, node_id: 7, name: 'Library', bytes: 6, kind: 'dir' as const, children: [], aggregated_count: 0, partial: false },
-    { index: 2, node_id: null, name: 'smaller objects', bytes: 4, kind: 'aggregate' as const, children: [], aggregated_count: 9, partial: false },
+    { index: 0, node_id: 1, name: 'root', bytes: 10, kind: 'dir' as const, children: [1, 2], aggregated_count: 0, partial: false, missing: false },
+    { index: 1, node_id: 7, name: 'Library', bytes: 6, kind: 'dir' as const, children: [], aggregated_count: 0, partial: false, missing: false },
+    { index: 2, node_id: null, name: 'smaller objects', bytes: 4, kind: 'aggregate' as const, children: [], aggregated_count: 9, partial: false, missing: false },
   ]
 
   test('resolves a measuring branch to its real node id', () => {

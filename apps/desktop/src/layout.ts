@@ -122,6 +122,8 @@ export function assignHues(view: ViewNode[]): number[] {
 }
 
 export function colorFor(node: ViewNode, hue: number, depth: number): string {
+  // A deleted item is a ghost: visible enough to strike through, obviously not live.
+  if (node.missing) return 'hsl(220 6% 26%)'
   switch (node.kind) {
     case 'restricted':
       return 'hsl(276 68% 52%)'

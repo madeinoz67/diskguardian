@@ -399,7 +399,7 @@ pub fn revalidate(
 
     let removed = gone.len() as u32;
     if removed > 0 {
-        scan.tree.forget(&gone);
+        scan.tree.mark_missing(&gone);
     }
 
     Ok(FreshnessReport {
@@ -504,7 +504,7 @@ pub fn delete_collected(
     }
 
     // Prune what actually left the disk, then re-project the view. No rescan.
-    scan.tree.forget(&deleted);
+    scan.tree.mark_missing(&deleted);
     scan.collector.clear();
 
     let view_root = node_id.map_or(scan.tree.root, |id| id as usize);

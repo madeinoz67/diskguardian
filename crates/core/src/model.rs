@@ -50,6 +50,9 @@ pub struct Node {
     pub partial: bool,
     /// True for a hard link whose inode was already counted elsewhere.
     pub link_skipped: bool,
+    /// Gone from disk since the scan. Still listed so the user can see what they did,
+    /// struck through and worth zero bytes.
+    pub missing: bool,
     pub note: Option<String>,
 }
 
@@ -86,18 +89,24 @@ impl Tree {
         self.nodes[self.root].file_count
     }
 
-    /// Drop nodes from the tree after they have been deleted on disk, and recompute every
-    /// ancestor's totals. This is what lets a delete refresh the view without re-walking
-    /// the volume, which on a large disk is the difference between instant and minutes.
-    pub fn forget(&mut self, ids: &[NodeId]) {
+    /// Mark nodes as gone from disk: struck through, worth nothing, still listed, with
+    /// every ancestor's totals reduced accordingly.
+    ///
+    /// Removing them outright was the first design and it made a deletion look like nothing
+    /// had happened. DaisyDisk keeps the item visible and strikes it out so the user can see
+    /// what they just did; the next scan is what clears it.
+    pub fn mark_missing(&mut self, ids: &[NodeId]) {
         let mut touched: Vec<NodeId> = Vec::new();
 
         for &id in ids {
             if id >= self.nodes.len() || id == self.root {
                 continue;
             }
+            self.nodes[id].missing = true;
+            self.nodes[id].own_bytes = 0;
+            self.nodes[id].total_bytes = 0;
+            self.nodes[id].file_count = 0;
             if let Some(parent) = self.nodes[id].parent {
-                self.nodes[parent].children.retain(|&child| child != id);
                 touched.push(parent);
             }
         }
@@ -111,6 +120,13 @@ impl Tree {
     fn recompute_from(&mut self, start: NodeId) {
         let mut cursor = Some(start);
         while let Some(id) = cursor {
+            if self.nodes[id].missing {
+                // A missing node contributes nothing, whatever still hangs off it.
+                self.nodes[id].total_bytes = 0;
+                self.nodes[id].file_count = 0;
+                cursor = self.nodes[id].parent;
+                continue;
+            }
             let child_total: u64 = self.nodes[id]
                 .children
                 .iter()

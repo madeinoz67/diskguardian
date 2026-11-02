@@ -490,3 +490,18 @@ body.dragging #sunburst {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* A deleted item stays visible, struck through, until the next scan clears it. */
+.legend-name.missing {
+  text-decoration: line-through;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.legend-row.missing .dot {
+  opacity: 0.35;
+}
+
+.legend-row.missing .legend-size {
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+}

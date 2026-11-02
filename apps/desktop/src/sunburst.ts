@@ -126,6 +126,28 @@ export class Sunburst {
         ctx.stroke()
         ctx.restore()
       }
+
+      if (node.missing) {
+        // Strike the petal through, the way DaisyDisk marks something that has gone.
+        ctx.save()
+        ctx.beginPath()
+        ctx.arc(geometry.cx, geometry.cy, outer, arc.start - Math.PI / 2, arc.end - Math.PI / 2)
+        ctx.arc(geometry.cx, geometry.cy, inner, arc.end - Math.PI / 2, arc.start - Math.PI / 2, true)
+        ctx.closePath()
+        ctx.clip()
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)'
+        ctx.lineWidth = 1.5
+        const mid = (inner + outer) / 2
+        const half = Math.max(6, (outer - inner) * 0.7)
+        const step = Math.max(4, (arc.end - arc.start) * mid * 0.10)
+        for (let a = arc.start - Math.PI / 2; a < arc.end - Math.PI / 2 + step; a += step) {
+          ctx.beginPath()
+          ctx.moveTo(geometry.cx + Math.cos(a) * (mid - half), geometry.cy + Math.sin(a) * (mid - half))
+          ctx.lineTo(geometry.cx + Math.cos(a) * (mid + half), geometry.cy + Math.sin(a) * (mid + half))
+          ctx.stroke()
+        }
+        ctx.restore()
+      }
     }
 
     // The centre is a button, not a slice: it climbs one level.

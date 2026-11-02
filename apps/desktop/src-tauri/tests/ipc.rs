@@ -186,7 +186,7 @@ fn an_unknown_scan_is_a_typed_error_not_a_panic() {
 }
 
 #[test]
-fn delete_removes_the_node_and_returns_a_smaller_view() {
+fn delete_strikes_the_node_through_and_shrinks_the_totals() {
     let app = build();
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
@@ -217,10 +217,18 @@ fn delete_removes_the_node_and_returns_a_smaller_view() {
     assert_eq!(report["mode"], "trash");
 
     let after = report["view"].as_array().expect("view array");
-    assert!(
-        !after.iter().any(|node| node["name"] == "sub"),
-        "the deleted folder must leave the view: {report}"
-    );
+    let struck = after
+        .iter()
+        .find(|node| node["name"] == "sub")
+        .expect("the deleted folder stays listed so the user can see it");
+    assert_eq!(struck["missing"], true, "and it is struck through: {report}");
+    assert_eq!(struck["bytes"], 0, "a missing node is worth nothing");
+
     let after_bytes = report["bytes"].as_u64().unwrap_or(0);
     assert!(after_bytes < before_bytes, "the total must shrink");
+    assert_eq!(
+        before_bytes - after_bytes,
+        65536,
+        "exactly the deleted subtree, not the directory's metadata size"
+    );
 }

@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 15/21
+progress: 16/22
 iteration: 1
 created: 2026-10-30
 ---
@@ -200,6 +200,18 @@ freed. The UI confirms with the measured size and re-renders the overview afterw
 **Note:** emptying the platform trash is global and irreversible, which is why it asks with a
 number attached rather than a bare confirm.
 
+### C22 — A deleted item is struck through, not silently gone  `[x]`
+Deleting (or losing) an item leaves it in the flower, marked `missing`, drawn with a strike
+across the petal and a struck-through name in the list, worth zero bytes and excluded from
+every ancestor's total. A rescan clears the ghosts.
+**Probe:** `cargo test` — `marking_a_node_missing_zeroes_it_and_updates_every_ancestor`
+(the node stays listed, is flagged, totals drop by exactly its subtree) and the IPC test
+`delete_strikes_the_node_through_and_shrinks_the_totals` (65536 bytes removed, not a
+directory's metadata size). The view gives a missing node a floor width of parent/200 so it
+stays visible while counting as zero.
+**Falsifier:** a deletion the user cannot see in the flower, or one that leaves the totals
+unchanged.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -229,7 +241,9 @@ number attached rather than a bare confirm.
 Ordered by space actually found on a real Mac, not by polish. Each becomes a claim when its
 increment opens.
 
-- **R1 — C18**: collecting from the list. Backend proven; frontend click path outstanding.
+- **R1 — C18**: collecting from the list. Backend proven by the IPC suite; the frontend
+  path has not reproduced since the delete fix, so this needs one click to confirm or refute.
+- **R6 — struck-through items**: DONE (C22).
 - **R2 — C14**: drop the redundant per-directory `stat` (double `du`'s kernel time).
 - **R3 — Admin scanning**: read restricted petals by scanning as root. Largest real win.
 - **R4 — APFS local snapshots**: list and purge; invisible in Finder, often tens of GB.

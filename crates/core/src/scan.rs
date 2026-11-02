@@ -110,6 +110,7 @@ struct Scanned {
     file_count: u64,
     partial: bool,
     link_skipped: bool,
+    missing: bool,
     note: Option<String>,
     children: Vec<Scanned>,
 }
@@ -130,6 +131,7 @@ fn flatten(scanned: Scanned, out: &mut Vec<Node>, parent: Option<NodeId>) -> Nod
         file_count,
         partial,
         link_skipped,
+        missing,
         note,
         children,
     } = scanned;
@@ -144,6 +146,7 @@ fn flatten(scanned: Scanned, out: &mut Vec<Node>, parent: Option<NodeId>) -> Nod
         parent,
         partial,
         link_skipped,
+        missing,
         note,
     });
 
@@ -193,6 +196,7 @@ impl Builder {
                     file_count: 0,
                     partial: true,
                     link_skipped: false,
+                    missing: false,
                     note: Some(err.to_string()),
                     children: Vec::new(),
                 };
@@ -282,6 +286,7 @@ impl Builder {
             file_count,
             partial,
             link_skipped: false,
+            missing: false,
             note: None,
             children,
         };
@@ -323,6 +328,7 @@ impl Builder {
             file_count: 1,
             partial: false,
             link_skipped: duplicated,
+            missing: false,
             note,
             children: Vec::new(),
         }

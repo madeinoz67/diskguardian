@@ -197,6 +197,7 @@ function buildDemo(): ViewNode[] {
     children: [],
     aggregated_count: 0,
     partial: false,
+    missing: false,
   })
 
   let seed = 7
@@ -214,6 +215,7 @@ function buildDemo(): ViewNode[] {
       children: [],
       aggregated_count: 0,
       partial: spec.kind === 'restricted',
+      missing: false,
     })
     nodes[parent]!.children.push(index)
 
@@ -231,6 +233,7 @@ function buildDemo(): ViewNode[] {
           children: [],
           aggregated_count: 0,
           partial: false,
+          missing: false,
         })
         nodes[index]!.children.push(child)
       }

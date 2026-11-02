@@ -360,7 +360,7 @@ fn dirs_home() -> Option<std::path::PathBuf> {
 }
 
 #[test]
-fn forgetting_a_deleted_node_updates_every_ancestor() {
+fn marking_a_node_missing_zeroes_it_and_updates_every_ancestor() {
     let dir = tempfile::tempdir().expect("tempdir");
     let sub = dir.path().join("sub");
     fs::create_dir(&sub).expect("mkdir");
@@ -379,11 +379,16 @@ fn forgetting_a_deleted_node_updates_every_ancestor() {
     let payload_bytes = tree.nodes[payload].total_bytes;
     let sub_id = tree.nodes.iter().position(|n| n.name == "sub").expect("sub");
 
-    tree.forget(&[payload]);
+    tree.mark_missing(&[payload]);
 
     assert!(
-        !tree.nodes[sub_id].children.contains(&payload),
-        "the deleted node must leave its parent"
+        tree.nodes[sub_id].children.contains(&payload),
+        "the missing node stays listed so the user can see what they deleted"
+    );
+    assert!(tree.nodes[payload].missing, "and it is flagged missing");
+    assert_eq!(
+        tree.nodes[payload].total_bytes, 0,
+        "a missing node is worth nothing"
     );
     assert_eq!(
         tree.nodes[sub_id].total_bytes,
@@ -400,13 +405,13 @@ fn forgetting_a_deleted_node_updates_every_ancestor() {
 }
 
 #[test]
-fn forgetting_the_scan_root_is_refused() {
+fn marking_the_scan_root_missing_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("a.bin"), b"x").expect("write");
     let mut tree = scan(dir.path(), &options()).expect("scan");
     let before = tree.total_bytes();
-    tree.forget(&[tree.root]);
-    assert_eq!(tree.total_bytes(), before, "the root cannot be forgotten");
+    tree.mark_missing(&[tree.root]);
+    assert_eq!(tree.total_bytes(), before, "the root cannot be marked missing");
 }
 
 #[test]

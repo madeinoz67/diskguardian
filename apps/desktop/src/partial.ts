@@ -57,6 +57,7 @@ export function partialView(rootName: string, branches: PartialBranch[]): ViewNo
       children: branches.map((_, i) => i + 1),
       aggregated_count: 0,
       partial: true,
+      missing: false,
     },
     ...branches.map((branch, i) => ({
       index: i + 1,
@@ -67,6 +68,7 @@ export function partialView(rootName: string, branches: PartialBranch[]): ViewNo
       children: [],
       aggregated_count: 0,
       partial: !branch.done,
+      missing: false,
     })),
   ]
 }

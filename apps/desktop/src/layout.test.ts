@@ -12,6 +12,7 @@ function node(index: number, name: string, bytes: number, children: number[] = [
     children,
     aggregated_count: 0,
     partial: false,
+    missing: false,
   }
 }
 
