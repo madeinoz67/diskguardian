@@ -265,6 +265,19 @@ failure worth remembering. What remains true: AC4 — a manual run against a rea
 machine — is still unverified **on `main`**, and the ship/kill sizing rule still has no
 real-machine number. The one-prompt-per-session behaviour is shipped, and its liveness
 mechanisms are pinned only by tests.
+**AC4 attempt under way (2026-11-02, live, not yet closed).** A real dialog was raised on a
+scan of `/private/var` (7.4 GB, a `protected` restricted petal at 20.9 MB): the app spawned
+`diskguardian-admin --serve` 49 s after launch and macOS presented "osascript wants to make
+changes". The claim stays open until the credential is supplied and the graft is observed —
+the principal supplies it, because automating a password prompt is not something this project
+will do.
+**Anomaly observed during that attempt, not yet a confirmed defect.** The measurement started
+itself: the only click was Scan, and the auto-measure branch fires on
+`admin_authorised() == true`, which on a fresh launch ought to be false. The suspicion is that
+the check reads a persisted record rather than a live session, which would mean the app can
+raise a root-consent dialog without the user asking for one. To be investigated with the
+gate passed; recorded here rather than in a chat message because it is the kind of thing that
+gets lost between sessions.
 
 ### C24 — Duplicate groups are content-identical, never a space promise  `[x]`
 A duplicate pass over a finished scan (never during one) groups only files whose whole-file
