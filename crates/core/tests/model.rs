@@ -5,7 +5,12 @@
 //! filesystem fixtures, because the claim under test is that tree arithmetic survives
 //! contact with real allocation numbers — a mocked shape would prove nothing.
 
-use diskguardian_core::{delete, scan, GraftError, Node, NodeId, NodeKind, ScanOptions, Tree};
+use diskguardian_core::{scan, GraftError, Node, NodeId, NodeKind, ScanOptions, Tree};
+
+// Only the macOS guard test below reaches this, and an ungated import is a `-D warnings`
+// failure on the platforms that skip that test.
+#[cfg(target_os = "macos")]
+use diskguardian_core::delete;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;

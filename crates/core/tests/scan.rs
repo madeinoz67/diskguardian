@@ -423,6 +423,7 @@ fn deletion_moves_to_trash_by_default() {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn dirs_home() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
 }

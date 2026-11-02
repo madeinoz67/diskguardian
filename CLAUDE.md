@@ -48,6 +48,10 @@ cd apps/desktop && bun run tauri:build   # the bundle
   early development so merge to main is ok until i enable rules in the repo"). Feature work may
   still go on a branch for isolation, but a green branch merging straight back is the default.
   When branch protection or a PR gate is turned on, this line changes first, not after.
+- **A platform-gated test gates its imports and helpers too.** Gating the test but leaving its
+  `use` or its fixture helper ungated is clean on the developer's machine and a `-D warnings`
+  failure on the platforms that skip the test. CI runs the engine on macOS, Ubuntu and Windows
+  precisely so this is caught; clippy on one platform is not a gate.
 - **No "should work".** Engine claims close on `cargo test` output; appearance claims close
   on a screenshot whose pixels someone looked at.
 - **Branch-scoped edits.** If a second session is working an area, do not rewrite the same

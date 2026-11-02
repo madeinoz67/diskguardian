@@ -20,11 +20,14 @@
 
 use crate::model::{Node, NodeId, NodeKind, Tree};
 use rayon::prelude::*;
+#[cfg(unix)]
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::Mutex;
 use std::time::Instant;
 
 #[derive(Debug, thiserror::Error)]
@@ -83,6 +86,9 @@ pub fn scan_with_progress(
     })?;
 
     let builder = Builder {
+        // The inode ledger only exists where hard links are identified; on other platforms
+        // there is nothing to dedupe and the field would be dead code.
+        #[cfg(unix)]
         seen: Mutex::new(HashSet::new()),
         max_entries: opts.max_entries,
         deadline: opts.deadline,
@@ -169,6 +175,7 @@ fn flatten(scanned: Scanned, out: &mut Vec<Node>, parent: Option<NodeId>) -> Nod
 }
 
 struct Builder {
+    #[cfg(unix)]
     seen: Mutex<HashSet<(u64, u64)>>,
     max_entries: Option<u64>,
     deadline: Option<Instant>,
