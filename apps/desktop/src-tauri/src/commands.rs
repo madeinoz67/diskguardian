@@ -138,8 +138,8 @@ pub fn peek_root(path: String) -> Vec<String> {
 }
 
 #[tauri::command]
-pub async fn scan(
-    app: tauri::AppHandle,
+pub async fn scan<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     path: String,
 ) -> Result<ScanResponse, String> {
@@ -422,6 +422,11 @@ pub fn collect(
     let node = node_id as usize;
     if node >= scan.tree.nodes.len() {
         return Err("node is not part of this scan".to_string());
+    }
+    if node == scan.tree.root {
+        // The guard refuses to delete the scan root, so collecting it would only build a
+        // collector that cannot be emptied. Fail where the user can still see why.
+        return Err("the scanned folder itself cannot be collected".to_string());
     }
     if add {
         scan.collector.add(node);

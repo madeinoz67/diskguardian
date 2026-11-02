@@ -1,11 +1,16 @@
 mod commands;
 mod platform;
-mod state;
+pub mod state;
 
 use state::AppState;
 
-pub fn run() {
-    tauri::Builder::default()
+/// Everything the app exposes: plugins, state and commands.
+///
+/// Shared rather than inlined into `run` so a test can build a mock app with exactly the
+/// same command surface the real one has. Without that, the multi-argument commands were
+/// only ever exercised by a human clicking them.
+pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
@@ -23,6 +28,10 @@ pub fn run() {
             commands::reveal,
             commands::quicklook,
         ])
+}
+
+pub fn run() {
+    configure(tauri::Builder::default())
         .run(tauri::generate_context!())
         .expect("DiskGuardian failed to start");
 }

@@ -150,6 +150,14 @@ multi-argument command raises a visible banner instead of failing silently on fi
 **Suspected class:** every command that takes more than one argument (`collect`, `view`,
 `delete_collected`, `reveal`, `quicklook`) is unexercised; `scan` and `peek_root`, which take
 one or none, are known good. That points at the IPC argument binding, not the handler.
+**2026-11-02 — that hypothesis is now refuted.** `src-tauri/tests/ipc.rs` builds the app's
+real command surface on Tauri's mock runtime and calls it with the exact JSON the frontend
+sends: `collect` returns `count: 1` and the right total, `collect` with `add: false` clears
+it, `view` returns a pruned tree, and an unknown scan is a typed error. Five tests, all
+passing. The backend of this feature works; the defect is in the frontend click path, and
+the new banner exists to name it. Also fixed here: collecting the scan root itself is now
+refused, because the guard will never delete it, so it only built a collector that could not
+be emptied.
 
 ### C19 — The scan target is chosen, not assumed  `[x]`
 The app opens on a "Disks and folders" screen listing every mounted volume with a usage gauge
@@ -207,6 +215,24 @@ number attached rather than a bare confirm.
 - **Delete prunes, it does not rescan** (2026-10-30). The first working version re-scanned the whole volume after every delete, which is minutes on a real disk and made the feature feel broken. `Tree::forget` now removes the deleted nodes, recomputes ancestors and re-projects the view, so the flower updates in the same frame.
 - **Trash by default, Option for permanent** (2026-10-30). The button moves to the Trash; holding Option deletes permanently and always confirms. Trash runs over 5 GB also confirm.
 - **Narrow deletion guard** (2026-10-30, from a failing test that was right). Protecting `/private` and `/usr` wholesale refused the user's own temp directory (through the `/tmp` symlink) and every Homebrew cache. The guard now names the system's own trees, and a second test pins the narrow behaviour so a future "fix" cannot re-widen it.
+
+## Roadmap — DaisyDisk parity (opened 2026-11-02)
+
+Ordered by space actually found on a real Mac, not by polish. Each becomes a claim when its
+increment opens.
+
+- **R1 — C18**: collecting from the list. Backend proven; frontend click path outstanding.
+- **R2 — C14**: drop the redundant per-directory `stat` (double `du`'s kernel time).
+- **R3 — Admin scanning**: read restricted petals by scanning as root. Largest real win.
+- **R4 — APFS local snapshots**: list and purge; invisible in Finder, often tens of GB.
+- **R5 — Hidden space**: purgeable, other APFS volumes, still-hidden items as a virtual node.
+- **R6 — APFS clone detection**: accuracy, so clones stop counting twice.
+- **R7 — Reveal in Finder + Quick Look wiring** on the selected petal.
+- **R8 — Starred folders** pinned in the overview.
+- **R9 — Packages** shown solid but expandable.
+- **R10 — Real-time gauges**, Option folds purgeable into the bar.
+- **R11 — Lower**: cloud accounts, parallel multi-disk scanning, disk images, network
+  volumes, Forget scan results.
 
 ## Not yet specified
 
