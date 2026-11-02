@@ -226,7 +226,11 @@ fn an_unreadable_path_becomes_a_restricted_result_not_a_refusal() {
 
     let results = fs::read_to_string(dir.path().join("results.jsonl")).expect("results");
     let lines: Vec<&str> = results.lines().collect();
-    assert_eq!(lines.len(), 2, "one result per path, including the unreadable one");
+    assert_eq!(
+        lines.len(),
+        2,
+        "one result per path, including the unreadable one"
+    );
 
     let second: serde_json::Value = serde_json::from_str(lines[1]).expect("json");
     assert_eq!(
