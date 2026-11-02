@@ -30,6 +30,7 @@ const toast = el<HTMLElement>('toast')
 const toastText = el<HTMLElement>('toast-text')
 const overview = el<HTMLElement>('overview')
 const volumeList = el<HTMLElement>('volume-list')
+const splitter = el<HTMLElement>('splitter')
 const cleanupPanel = el<HTMLElement>('cleanup')
 const candidatesList = el<HTMLElement>('candidates-list')
 const biggestList = el<HTMLElement>('biggest-list')
@@ -620,6 +621,70 @@ deleteButton.title = 'Move to Trash · hold Option to delete permanently'
 
 const resizeObserver = new ResizeObserver(() => sunburst.resize())
 resizeObserver.observe(canvas)
+
+// ─── resizable legend ────────────────────────────────────────────────────────────────
+//
+// The contents list is the place long names and deep folders live, so its width is the
+// user's call. The width persists, double-click resets it, and arrow keys nudge it for
+// anyone who cannot drag.
+
+const LEGEND_MIN = 220
+const LEGEND_MAX = 640
+const LEGEND_DEFAULT = 320
+
+function setLegendWidth(width: number): void {
+  const clamped = Math.min(LEGEND_MAX, Math.max(LEGEND_MIN, Math.round(width)))
+  document.documentElement.style.setProperty('--legend-width', `${clamped}px`)
+  try {
+    localStorage.setItem('diskguardian.legendWidth', String(clamped))
+  } catch {
+    // A private window with storage disabled is not a reason to lose the resize.
+  }
+}
+
+function legendWidth(): number {
+  const stored = Number(localStorage.getItem('diskguardian.legendWidth'))
+  return Number.isFinite(stored) && stored > 0 ? stored : LEGEND_DEFAULT
+}
+
+try {
+  setLegendWidth(legendWidth())
+} catch {
+  setLegendWidth(LEGEND_DEFAULT)
+}
+
+splitter.addEventListener('pointerdown', (event) => {
+  event.preventDefault()
+  splitter.setPointerCapture(event.pointerId)
+  splitter.classList.add('dragging')
+  const startX = event.clientX
+  const startWidth = legendWidth()
+
+  const move = (moveEvent: PointerEvent): void => {
+    setLegendWidth(startWidth - (moveEvent.clientX - startX))
+  }
+  const stop = (): void => {
+    splitter.classList.remove('dragging')
+    splitter.removeEventListener('pointermove', move)
+    splitter.removeEventListener('pointerup', stop)
+    sunburst.resize()
+  }
+
+  splitter.addEventListener('pointermove', move)
+  splitter.addEventListener('pointerup', stop)
+})
+
+splitter.addEventListener('dblclick', () => {
+  setLegendWidth(LEGEND_DEFAULT)
+  sunburst.resize()
+})
+
+splitter.addEventListener('keydown', (event) => {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  event.preventDefault()
+  setLegendWidth(legendWidth() + (event.key === 'ArrowLeft' ? 20 : -20))
+  sunburst.resize()
+})
 
 // ─── boot ─────────────────────────────────────────────────────────────────────────────
 

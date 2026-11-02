@@ -132,8 +132,35 @@ body.scanning #status::before {
 
 #content {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  /* The middle column is the grab strip; its width is the drag target. */
+  grid-template-columns: 1fr 7px var(--legend-width, 320px);
   min-height: 0;
+}
+
+#splitter {
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+  outline: none;
+}
+
+#splitter::after {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  background: var(--separator);
+  transition: background 0.12s ease;
+}
+
+#splitter:hover::after,
+#splitter:focus-visible::after,
+#splitter.dragging::after {
+  background: rgba(10, 132, 255, 0.65);
+}
+
+/* The legend no longer draws the border: the splitter is the boundary now. */
+#legend {
+  border-left: 0;
 }
 
 #stage {
