@@ -161,6 +161,57 @@ fn unreadable_directory_is_reported_not_dropped() {
     assert!(tree.errors >= 1, "the error count must be non-zero");
 }
 
+#[test]
+fn an_expired_deadline_reports_restricted_nodes_never_zero() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(dir.path().join("sub")).expect("mkdir");
+    fs::write(dir.path().join("sub/payload.bin"), vec![7u8; 64 * 1024]).expect("write");
+    fs::write(dir.path().join("plain.bin"), b"x").expect("write");
+
+    // A deadline already in the past is the whole budget spent before the first step.
+    let spent = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(1))
+        .unwrap_or_else(std::time::Instant::now);
+    let tree = scan(
+        dir.path(),
+        &ScanOptions {
+            max_entries: None,
+            deadline: Some(spent),
+        },
+    )
+    .expect("scan must still succeed");
+
+    // Every directory, the root included, becomes a Restricted node with the same
+    // shape as a permission failure: reported, never silently dropped (A3).
+    assert_eq!(tree.nodes[tree.root].kind, NodeKind::Restricted);
+    assert!(tree.nodes[tree.root].partial, "a deadline-hit node is partial");
+    assert_eq!(
+        tree.nodes[tree.root].note.as_deref(),
+        Some("deadline reached"),
+        "the note must say why it is unmeasured"
+    );
+    assert!(
+        tree.nodes.iter().all(|n| n.children.is_empty()),
+        "nothing may be descended into past the deadline"
+    );
+    // The unmeasured payload is reported by the Restricted node itself — never dropped,
+    // never guessed. The directory's own allocation is whatever the filesystem says it
+    // is: on APFS a small directory reports zero blocks, and zero is then the honest
+    // number, asserted exactly rather than as "non-zero".
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let expected = fs::metadata(dir.path()).expect("meta").blocks() * 512;
+        assert_eq!(
+            tree.total_bytes(),
+            expected,
+            "the root's own allocation, exactly as the filesystem reports it"
+        );
+    }
+    assert!(tree.errors >= 1, "the walk must count what it could not do");
+    assert_tree_arithmetic(&tree);
+}
+
 fn current_uid() -> u32 {
     // Avoiding a libc dependency for one integer: the real uid comes from `id -u`.
     #[cfg(target_os = "macos")]

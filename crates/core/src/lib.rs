@@ -18,6 +18,8 @@ pub mod view;
 
 pub use collect::Collector;
 pub use delete::{delete, needs_confirmation, DeleteMode, DeleteOutcome, DeleteReport, GuardError};
-pub use model::{Node, NodeId, NodeKind, Tree};
-pub use scan::{scan, scan_with_progress, BranchDone, ProgressFn, ScanError, ScanOptions};
+pub use model::{GraftError, Node, NodeId, NodeKind, Tree};
+pub use scan::{
+    scan, scan_with_progress, BranchDone, ProgressFn, ScanError, ScanOptions, DEADLINE_NOTE,
+};
 pub use view::{build_view, ViewNode, ViewOptions};
