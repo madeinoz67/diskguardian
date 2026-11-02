@@ -543,6 +543,11 @@ pub fn collect(
     if node >= scan.tree.nodes.len() {
         return Err("node is not part of this scan".to_string());
     }
+    if scan.tree.node(node).kind == diskguardian_core::NodeKind::Symlink {
+        // A symlink is a pointer someone placed on purpose. Deleting one costs nothing and
+        // breaks whatever it points at, so it never enters the collector.
+        return Err("symbolic links are not collected: they may be there for a reason".to_string());
+    }
     if node == scan.tree.root {
         // The guard refuses to delete the scan root, so collecting it would only build a
         // collector that cannot be emptied. Fail where the user can still see why.

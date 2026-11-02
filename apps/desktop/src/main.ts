@@ -367,9 +367,11 @@ function renderLegend(): void {
     name.title = label
     row.title = node.missing
       ? `${label} — deleted, rescan to clear`
-      : node.kind === 'restricted'
-        ? `${label} — restricted: the system will not let any app read this. Measure restricted areas, or grant Full Disk Access, to see a size.`
-        : label
+      : node.kind === 'symlink'
+        ? `${label} — symbolic link: points elsewhere and costs only the link itself. Not offered for collection.`
+        : node.kind === 'restricted'
+          ? `${label} — restricted: the system will not let any app read this. Measure restricted areas, or grant Full Disk Access, to see a size.`
+          : label
     if (node.missing) {
       name.classList.add('missing')
       row.classList.add('missing')
@@ -377,11 +379,18 @@ function renderLegend(): void {
 
     const size = document.createElement('span')
     size.className = 'legend-size'
-    size.textContent = node.missing ? 'deleted' : formatBytes(node.bytes)
+    size.textContent = node.missing
+      ? 'deleted'
+      : node.kind === 'restricted'
+        ? '🔒 unmeasured'
+        : node.kind === 'symlink'
+          ? '→ link'
+          : formatBytes(node.bytes)
 
     row.append(dot, name, size)
 
-    if (node.node_id !== null) {
+    // A symlink is a pointer someone placed on purpose: never offered for collection.
+    if (node.node_id !== null && node.kind !== 'symlink') {
       const collectButton = document.createElement('button')
       const nodeId = node.node_id
       const collected = state.collectedIds.includes(nodeId)
