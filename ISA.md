@@ -254,10 +254,17 @@ dialog source and argv remain byte-identical to the fixed template. The helper i
 mechanically pinned as having no delete callsites. **Not closed:** AC2's elevated arm (needs
 sudo, which the builder correctly refused to automate) and AC4 (a manual human run). The
 ship/kill sizing rule therefore has no real-machine number yet.
-**Cadence gap closed on a branch, not on main:** `r3-session-scanning` (`fd853b1`, rebased)
-implements one prompt per app run, with the three liveness mechanisms and their tests. It is
-green (ipc 16, serve 6, job 10, model 5, scan 18) and unmerged, because merging it would ship
-a privileged behaviour that has not yet run against a real dialog on a real machine.
+**Cadence gap — CORRECTED 2026-11-02: it is on `main`, not on a branch.** This paragraph used to
+say `r3-session-scanning` was unmerged, and that merging it "would ship a privileged behaviour
+that has not yet run against a real dialog". Git says otherwise: `fd853b1` has been an ancestor
+of `main` since merge `b794c4d` ("merge: one administrator prompt per app session"), and it has
+been pushed. The prose was written before that merge and never corrected, so for a while the
+state of record claimed a safety position the tree did not hold. It is kept visible rather than
+quietly rewritten, because a document asserting restraint that the code does not have is the
+failure worth remembering. What remains true: AC4 — a manual run against a real dialog on a real
+machine — is still unverified **on `main`**, and the ship/kill sizing rule still has no
+real-machine number. The one-prompt-per-session behaviour is shipped, and its liveness
+mechanisms are pinned only by tests.
 
 ### C24 — Duplicate groups are content-identical, never a space promise  `[x]`
 A duplicate pass over a finished scan (never during one) groups only files whose whole-file
@@ -370,8 +377,9 @@ closes that gap.
 - **Delete prunes, it does not rescan** (2026-10-30). The first working version re-scanned the whole volume after every delete, which is minutes on a real disk and made the feature feel broken. `Tree::forget` now removes the deleted nodes, recomputes ancestors and re-projects the view, so the flower updates in the same frame.
 - **Trash by default, Option for permanent** (2026-10-30). The button moves to the Trash; holding Option deletes permanently and always confirms. Trash runs over 5 GB also confirm.
 - **Admin scanning is prompt-per-session, not a signed helper** (2026-11-02; cadence set by the
-  principal: "one per privileged session"). Built on branch `r3-session-scanning` (rebased to
-  `fd853b1`), green, not yet merged. The original design's §10 said a resident privileged
+  principal: "one per privileged session"). Merged to `main` as `b794c4d` from branch
+  `r3-session-scanning` (`fd853b1`) — corrected 2026-11-02, because this entry claimed "not yet
+  merged" while the merge had been in history for some time. See the C23 status above. The original design's §10 said a resident privileged
   daemon should not be built before a signing identity exists; the principal's cadence decision
   overrides that judgement deliberately, and the liveness tests below are the price of it. The first privileged pass raises the
   OS prompt; later passes in the same app run reuse that helper rather than asking again. The
