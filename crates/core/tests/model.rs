@@ -229,6 +229,7 @@ fn restricted_roots_lists_only_topmost_restricted_nodes() {
             partial: kind == NodeKind::Restricted,
             link_skipped: false,
             missing: false,
+            newest_modified: None,
             note: None,
         }
     }

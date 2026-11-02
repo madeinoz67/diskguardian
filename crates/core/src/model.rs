@@ -53,6 +53,12 @@ pub struct Node {
     /// Gone from disk since the scan. Still listed so the user can see what they did,
     /// struck through and worth zero bytes.
     pub missing: bool,
+    /// Newest modification time anywhere in this subtree, in Unix seconds.
+    ///
+    /// A directory's own mtime only moves when its entry list changes, so it says nothing
+    /// about whether the *contents* are stale. The newest descendant is what an age rule
+    /// ("untouched for 90 days") actually means.
+    pub newest_modified: Option<u64>,
     pub note: Option<String>,
 }
 
@@ -176,6 +182,12 @@ impl Tree {
             path.push(name);
         }
         path
+    }
+
+    /// True when nothing in this subtree has been written since `cutoff` (Unix seconds).
+    #[must_use]
+    pub fn older_than(&self, id: NodeId, cutoff: u64) -> bool {
+        self.nodes[id].newest_modified.is_some_and(|m| m < cutoff)
     }
 
     /// How many levels below the scan root this node sits.

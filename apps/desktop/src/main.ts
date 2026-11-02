@@ -4,7 +4,7 @@ import { Sunburst } from './sunburst'
 import { assignHues, colorFor } from './layout'
 import type { Arc } from './layout'
 import { formatBytes, formatCount } from './format'
-import type { ViewNode, VolumeInfo } from './types'
+import type { CleanupItem, ViewNode, VolumeInfo } from './types'
 import { basename, gaugeFor, toneColor } from './overview'
 import { applyBranch, advance, findChildByName, partialView, startBranches } from './partial'
 import type { PartialBranch } from './partial'
@@ -30,6 +30,9 @@ const toast = el<HTMLElement>('toast')
 const toastText = el<HTMLElement>('toast-text')
 const overview = el<HTMLElement>('overview')
 const volumeList = el<HTMLElement>('volume-list')
+const cleanupPanel = el<HTMLElement>('cleanup')
+const candidatesList = el<HTMLElement>('candidates-list')
+const biggestList = el<HTMLElement>('biggest-list')
 const adminAction = el<HTMLButtonElement>('admin-action')
 
 const sunburst = new Sunburst(canvas)
@@ -723,6 +726,16 @@ async function boot(): Promise<void> {
   }
 
   el<HTMLButtonElement>('scan-folder').addEventListener('click', () => void pickFolder())
+  el<HTMLButtonElement>('cleanup-open').addEventListener('click', () => {
+    cleanupPanel.hidden = false
+    void refreshCleanup()
+  })
+  el<HTMLButtonElement>('cleanup-close').addEventListener('click', () => {
+    cleanupPanel.hidden = true
+  })
+  el<HTMLButtonElement>('cleanup-run').addEventListener('click', () => void refreshCleanup())
+  el<HTMLSelectElement>('cleanup-floor').addEventListener('change', () => void refreshCleanup())
+  el<HTMLSelectElement>('cleanup-age').addEventListener('change', () => void refreshCleanup())
 
   // The tree is a snapshot; deletions made outside the app are invisible until something
   // re-reads the disk. Regaining focus is the moment a person expects it to be current.
@@ -788,6 +801,96 @@ async function emptyTrashNow(bytes: number): Promise<void> {
     await showOverview()
   } catch (error) {
     showError(`Could not empty the Trash: ${String(error)}`)
+  }
+}
+
+// ─── cleanup ──────────────────────────────────────────────────────────────────────────
+
+function ageLabel(modified: number | null): string {
+  if (modified === null) return 'age unknown'
+  const days = Math.max(0, Math.floor((Date.now() / 1000 - modified) / 86_400))
+  if (days === 0) return 'today'
+  if (days === 1) return 'yesterday'
+  if (days < 30) return `${days} days old`
+  if (days < 365) return `${Math.floor(days / 30)} months old`
+  return `${Math.floor(days / 365)} years old`
+}
+
+function cleanupRow(item: CleanupItem, onCollect: () => void): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'cleanup-row'
+
+  const left = document.createElement('div')
+  const name = document.createElement('div')
+  name.className = 'cleanup-name'
+  name.textContent = item.path.split('/').slice(-1)[0] ?? item.path
+  name.title = item.path
+
+  const why = document.createElement('div')
+  why.className = 'cleanup-why'
+  why.textContent = `${item.reason} · ${ageLabel(item.newest_modified)} · ${item.path}`
+  why.title = item.path
+
+  left.append(name, why)
+
+  const size = document.createElement('span')
+  size.className = 'cleanup-size'
+  size.textContent = formatBytes(item.bytes)
+
+  const add = document.createElement('button')
+  add.type = 'button'
+  add.className = 'cleanup-add'
+  add.textContent = '+'
+  add.title = 'Add to the collector'
+  add.addEventListener('click', onCollect)
+
+  row.append(left, size, add)
+  return row
+}
+
+async function refreshCleanup(): Promise<void> {
+  const frame = state.stack[state.stack.length - 1]
+  if (!state.scanId || !frame) {
+    setStatus('Scan something first')
+    return
+  }
+
+  const floor = Number(el<HTMLSelectElement>('cleanup-floor').value)
+  const ageValue = el<HTMLSelectElement>('cleanup-age').value
+  const [daysAxis] = ageValue.split(':')
+  const ageDays = ageValue === '' ? null : Number(daysAxis)
+  const newer = ageValue.endsWith(':new')
+
+  candidatesList.replaceChildren()
+  biggestList.replaceChildren()
+  setStatus('Working out what is filling the disk…')
+
+  try {
+    const report = await bridge.cleanup(state.scanId, floor, ageDays, newer)
+
+    el<HTMLElement>('candidates-title').textContent =
+      `Candidates · ${report.candidates.length} · ${formatBytes(report.total_candidate_bytes)}`
+
+    if (report.candidates.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'cleanup-why'
+      empty.textContent = 'Nothing recognised above this size and age. Widen the filters.'
+      candidatesList.append(empty)
+    }
+    for (const item of report.candidates) {
+      candidatesList.append(cleanupRow(item, () => void toggleCollect(item.node, true)))
+    }
+
+    el<HTMLElement>('biggest-title').textContent = 'Biggest items'
+    for (const item of report.biggest) {
+      biggestList.append(cleanupRow(item, () => void toggleCollect(item.node, true)))
+    }
+
+    setStatus(
+      `${report.candidates.length} candidate${report.candidates.length === 1 ? '' : 's'} · ${formatBytes(report.total_candidate_bytes)}`,
+    )
+  } catch (error) {
+    showError(`Cleanup report failed: ${String(error)}`)
   }
 }
 

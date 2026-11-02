@@ -204,6 +204,119 @@ pub fn view(
 }
 
 #[derive(Debug, Serialize)]
+pub struct CleanupItem {
+    pub node: u64,
+    pub path: String,
+    pub bytes: u64,
+    pub newest_modified: Option<u64>,
+    /// Rule label ("regenerable", "cache", ...) or absent for a size-only match.
+    pub kind: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CleanupReport {
+    /// Things a rule recognises as rebuildable or disposable, biggest first.
+    pub candidates: Vec<CleanupItem>,
+    /// The largest items in the scan regardless of rule, biggest first.
+    pub biggest: Vec<CleanupItem>,
+    /// Same size floor, but the other side of the age bound, when the caller asked for it.
+    pub recent: Vec<CleanupItem>,
+    pub total_candidate_bytes: u64,
+}
+
+fn to_item(m: &diskguardian_core::Match) -> CleanupItem {
+    CleanupItem {
+        node: m.node as u64,
+        path: m.path.display().to_string(),
+        bytes: m.bytes,
+        newest_modified: m.newest_modified,
+        kind: m.kind.map(|k| k.label().to_string()),
+        reason: m.reason.clone(),
+    }
+}
+
+/// What is filling the disk, and what looks disposable.
+///
+/// Read-only: this proposes, and the human still collects and deletes. Age is a parameter in
+/// both directions rather than a policy, because "recent but unwanted" is a real question.
+#[tauri::command]
+pub fn cleanup(
+    state: State<'_, AppState>,
+    scan_id: String,
+    min_bytes: u64,
+    age_days: Option<u64>,
+    newer: bool,
+) -> Result<CleanupReport, String> {
+    let scans = lock_scans(&state)?;
+    let scan = scans.get(&scan_id).ok_or("unknown scan")?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let age = age_days.map(|days| {
+        if newer {
+            diskguardian_core::AgeFilter::NewerThanDays(days)
+        } else {
+            diskguardian_core::AgeFilter::OlderThanDays(days)
+        }
+    });
+
+    let found = diskguardian_core::candidates(
+        &scan.tree,
+        &diskguardian_core::ClassifyOptions {
+            min_bytes,
+            age,
+            now,
+        },
+    );
+
+    let biggest = diskguardian_core::find(
+        &scan.tree,
+        &diskguardian_core::FindQuery {
+            min_bytes,
+            age: None,
+            name_contains: None,
+            limit: 50,
+        },
+        now,
+    );
+
+    // The same floor on the other side of the age bound: "recent and large" is a legitimate
+    // question, and the caller should not have to run two scans to ask it.
+    let recent = if age_days.is_some() {
+        let opposite = age.map(|_| {
+            if newer {
+                diskguardian_core::AgeFilter::OlderThanDays(0)
+            } else {
+                diskguardian_core::AgeFilter::NewerThanDays(0)
+            }
+        });
+        diskguardian_core::find(
+            &scan.tree,
+            &diskguardian_core::FindQuery {
+                min_bytes,
+                age: opposite,
+                name_contains: None,
+                limit: 25,
+            },
+            now,
+        )
+    } else {
+        Vec::new()
+    };
+
+    Ok(CleanupReport {
+        total_candidate_bytes: found.iter().map(|m| m.bytes).sum(),
+        candidates: found.iter().map(to_item).collect(),
+        biggest: biggest.iter().map(to_item).collect(),
+        recent: recent.iter().map(to_item).collect(),
+    })
+}
+
+#[derive(Debug, Serialize)]
 pub struct TrashStats {
     /// Where this platform keeps the trash, empty when it has no path-based one.
     pub path: String,

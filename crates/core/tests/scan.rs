@@ -529,3 +529,149 @@ fn confirmation_is_required_for_top_level_folders_whatever_their_size() {
         diskguardian_core::delete::CONFIRM_THRESHOLD_BYTES
     ));
 }
+
+// ── classify ─────────────────────────────────────────────────────────────────────────
+
+use diskguardian_core::{candidates, find, AgeFilter, CandidateKind, ClassifyOptions, FindQuery};
+
+fn kinds(found: &[diskguardian_core::Match]) -> Vec<CandidateKind> {
+    let mut kinds: Vec<CandidateKind> = found.iter().filter_map(|m| m.kind).collect();
+    kinds.sort_by_key(|k| k.label());
+    kinds
+}
+
+#[test]
+fn candidates_find_regenerable_cache_backup_and_image_directories() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (name, size) in [
+        ("DerivedData", 2 << 20),
+        ("node_modules", 3 << 20),
+        ("Caches", 2 << 20),
+        ("backup-2024", 2 << 20),
+    ] {
+        let path = dir.path().join(name);
+        fs::create_dir(&path).expect("mkdir");
+        fs::write(path.join("blob.bin"), vec![1u8; size]).expect("write");
+    }
+    fs::write(dir.path().join("holiday.dmg"), vec![1u8; 2 << 20]).expect("write");
+    fs::write(dir.path().join("notes.txt"), b"keep me").expect("write");
+
+    let tree = scan(dir.path(), &options()).expect("scan");
+    let found = candidates(
+        &tree,
+        &ClassifyOptions {
+            min_bytes: 1 << 20,
+            age: None,
+            now: 0,
+        },
+    );
+
+    let labels: Vec<&str> = kinds(&found).iter().map(|k| k.label()).collect();
+    assert!(labels.contains(&"regenerable"), "got {labels:?}");
+    assert!(labels.contains(&"cache"), "got {labels:?}");
+    assert!(labels.contains(&"backup"), "got {labels:?}");
+    assert!(labels.contains(&"disk image"), "got {labels:?}");
+    assert!(
+        !found.iter().any(|m| m.path.ends_with("notes.txt")),
+        "an ordinary file is not a candidate"
+    );
+}
+
+#[test]
+fn candidates_are_reported_once_not_once_per_level() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let nested = dir.path().join("node_modules").join("node_modules");
+    fs::create_dir_all(&nested).expect("mkdir");
+    fs::write(nested.join("blob.bin"), vec![1u8; 2 << 20]).expect("write");
+
+    let tree = scan(dir.path(), &options()).expect("scan");
+    let found = candidates(
+        &tree,
+        &ClassifyOptions {
+            min_bytes: 1024,
+            age: None,
+            now: 0,
+        },
+    );
+
+    assert_eq!(found.len(), 1, "the topmost match wins: {found:?}");
+    assert!(found[0].path.ends_with("node_modules"));
+}
+
+#[test]
+fn age_is_a_filter_the_caller_chooses_in_either_direction() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fresh = dir.path().join("DerivedData");
+    fs::create_dir(&fresh).expect("mkdir");
+    fs::write(fresh.join("blob.bin"), vec![1u8; 2 << 20]).expect("write");
+
+    let tree = scan(dir.path(), &options()).expect("scan");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+
+    // No age filter: the fresh directory is a candidate, because name is the signal.
+    let any_age = candidates(
+        &tree,
+        &ClassifyOptions {
+            min_bytes: 1024,
+            age: None,
+            now,
+        },
+    );
+    assert_eq!(any_age.len(), 1, "age must not be a precondition");
+
+    // Older than 30 days: it is too new, so it drops out.
+    let old = candidates(
+        &tree,
+        &ClassifyOptions {
+            min_bytes: 1024,
+            age: Some(AgeFilter::OlderThanDays(30)),
+            now,
+        },
+    );
+    assert!(old.is_empty(), "a fresh directory is not old");
+
+    // Newer than 1 day: conversely, the recent one is exactly what this finds.
+    let recent = find(
+        &tree,
+        &FindQuery {
+            min_bytes: 1024,
+            age: Some(AgeFilter::NewerThanDays(1)),
+            name_contains: None,
+            limit: 10,
+        },
+        now,
+    );
+    assert!(
+        recent.iter().any(|m| m.path.ends_with("DerivedData")),
+        "recent items must be findable: {recent:?}"
+    );
+}
+
+#[test]
+fn find_matches_by_name_size_and_returns_nothing_above_the_limit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("holiday.dmg"), vec![1u8; 3 << 20]).expect("write");
+    fs::write(dir.path().join("tiny.txt"), b"x").expect("write");
+
+    let tree = scan(dir.path(), &options()).expect("scan");
+    let found = find(
+        &tree,
+        &FindQuery {
+            min_bytes: 1 << 20,
+            age: None,
+            name_contains: Some("DMG".to_string()),
+            limit: 10,
+        },
+        0,
+    );
+
+    assert_eq!(
+        found.len(),
+        1,
+        "case-insensitive name and a size floor: {found:?}"
+    );
+    assert!(found[0].path.ends_with("holiday.dmg"));
+}

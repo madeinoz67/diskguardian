@@ -128,6 +128,7 @@ struct Scanned {
     partial: bool,
     link_skipped: bool,
     missing: bool,
+    newest_modified: Option<u64>,
     note: Option<String>,
     children: Vec<Scanned>,
 }
@@ -149,6 +150,7 @@ fn flatten(scanned: Scanned, out: &mut Vec<Node>, parent: Option<NodeId>) -> Nod
         partial,
         link_skipped,
         missing,
+        newest_modified,
         note,
         children,
     } = scanned;
@@ -164,6 +166,7 @@ fn flatten(scanned: Scanned, out: &mut Vec<Node>, parent: Option<NodeId>) -> Nod
         partial,
         link_skipped,
         missing,
+        newest_modified,
         note,
     });
 
@@ -290,6 +293,19 @@ impl Builder {
             own_bytes += allocation(&meta);
         }
 
+        let own_modified = fs::metadata(path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        let newest_modified = children
+            .iter()
+            .filter_map(|c| c.newest_modified)
+            .max()
+            .into_iter()
+            .chain(own_modified)
+            .max();
+
         let child_total: u64 = children.iter().map(|c| c.total_bytes).sum();
         // Leaves count 1 each, so summing the children's counts is the whole subtree.
         let file_count: u64 = children.iter().map(|c| c.file_count).sum();
@@ -303,6 +319,7 @@ impl Builder {
             partial,
             link_skipped: false,
             missing: false,
+            newest_modified,
             note: None,
             children,
         };
@@ -345,6 +362,11 @@ impl Builder {
             partial: false,
             link_skipped: duplicated,
             missing: false,
+            newest_modified: meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs()),
             note,
             children: Vec::new(),
         }
@@ -393,6 +415,7 @@ fn restricted(name: String, path: &Path, note: String) -> Scanned {
         partial: true,
         link_skipped: false,
         missing: false,
+        newest_modified: None,
         note: Some(note),
         children: Vec::new(),
     }

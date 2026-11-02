@@ -31,6 +31,22 @@ export interface CollectState {
   needs_confirmation: boolean
 }
 
+export interface CleanupItem {
+  node: number
+  path: string
+  bytes: number
+  newest_modified: number | null
+  kind: string | null
+  reason: string
+}
+
+export interface CleanupReport {
+  candidates: CleanupItem[]
+  biggest: CleanupItem[]
+  recent: CleanupItem[]
+  total_candidate_bytes: number
+}
+
 export interface TrashStats {
   path: string
   bytes: number

@@ -11,6 +11,7 @@ import type {
   CollectState,
   DeleteReport,
   FreshnessReport,
+  CleanupReport,
   EmptyReport,
   ScanResponse,
   TrashStats,
@@ -55,6 +56,16 @@ export async function scan(path: string): Promise<ScanResponse> {
 export async function view(scanId: string, nodeId: number | null): Promise<ViewNode[]> {
   if (!isTauri) return demoView(nodeId)
   return invoke<ViewNode[]>('view', { scanId, nodeId })
+}
+
+export async function cleanup(
+  scanId: string,
+  minBytes: number,
+  ageDays: number | null,
+  newer: boolean,
+): Promise<CleanupReport> {
+  if (!isTauri) return { candidates: [], biggest: [], recent: [], total_candidate_bytes: 0 }
+  return invoke<CleanupReport>('cleanup', { scanId, minBytes, ageDays, newer })
 }
 
 export async function trashStats(): Promise<TrashStats> {

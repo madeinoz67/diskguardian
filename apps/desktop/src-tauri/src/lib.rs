@@ -23,6 +23,7 @@ pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             commands::collect,
             commands::revalidate,
             commands::trash_stats,
+            commands::cleanup,
             commands::empty_trash,
             commands::collected,
             commands::delete_collected,

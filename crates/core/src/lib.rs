@@ -10,12 +10,14 @@
 //! 2. Space that could not be measured is **reported as restricted**, never
 //!    silently dropped.
 
+pub mod classify;
 pub mod collect;
 pub mod delete;
 pub mod model;
 pub mod scan;
 pub mod view;
 
+pub use classify::{candidates, find, AgeFilter, CandidateKind, ClassifyOptions, FindQuery, Match};
 pub use collect::Collector;
 pub use delete::{delete, needs_confirmation, DeleteMode, DeleteOutcome, DeleteReport, GuardError};
 pub use model::{GraftError, Node, NodeId, NodeKind, Tree};

@@ -28,6 +28,43 @@
         <aside id="legend" aria-label="Contents"></aside>
       </main>
 
+      <div id="cleanup" hidden>
+        <header class="cleanup-head">
+          <h1>Cleanup</h1>
+          <div class="cleanup-controls">
+            <label>at least
+              <select id="cleanup-floor">
+                <option value="104857600">100 MB</option>
+                <option value="536870912">500 MB</option>
+                <option value="1073741824" selected>1 GB</option>
+                <option value="10737418240">10 GB</option>
+              </select>
+            </label>
+            <label>age
+              <select id="cleanup-age">
+                <option value="">any</option>
+                <option value="30:old">older than 30 days</option>
+                <option value="90:old">older than 90 days</option>
+                <option value="7:new">changed in the last 7 days</option>
+                <option value="1:new">changed in the last day</option>
+              </select>
+            </label>
+            <button id="cleanup-run" type="button">Refresh</button>
+            <button id="cleanup-close" type="button">Close</button>
+          </div>
+        </header>
+        <div class="cleanup-body">
+          <section>
+            <h2 id="candidates-title">Candidates</h2>
+            <div id="candidates-list" class="cleanup-list"></div>
+          </section>
+          <section>
+            <h2 id="biggest-title">Biggest items</h2>
+            <div id="biggest-list" class="cleanup-list"></div>
+          </section>
+        </div>
+      </div>
+
       <div id="overview" hidden>
         <div class="overview-inner">
           <h1>Disks and folders</h1>
@@ -45,6 +82,7 @@
           <strong id="collect-amount">0 bytes</strong>
           <span id="collect-caption">in the collector</span>
         </div>
+        <button id="cleanup-open" type="button" class="collector-action">Candidates</button>
         <button id="delete-button" type="button" disabled>Delete</button>
       </footer>
     </div>
