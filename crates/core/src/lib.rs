@@ -13,6 +13,7 @@
 pub mod classify;
 pub mod collect;
 pub mod delete;
+pub mod duplicates;
 pub mod model;
 pub mod scan;
 pub mod view;
@@ -20,6 +21,11 @@ pub mod view;
 pub use classify::{candidates, find, AgeFilter, CandidateKind, ClassifyOptions, FindQuery, Match};
 pub use collect::Collector;
 pub use delete::{delete, needs_confirmation, DeleteMode, DeleteOutcome, DeleteReport, GuardError};
+pub use duplicates::{
+    find_duplicates, find_duplicates_with_progress, DuplicateError, DuplicateGroup,
+    DuplicateMember, DuplicateOptions, DuplicateProgress, DuplicateProgressFn, DuplicateReport,
+    DuplicateStage, CONTENT_IDENTICAL_CAVEAT,
+};
 pub use model::{GraftError, Node, NodeId, NodeKind, Tree};
 pub use scan::{
     scan, scan_with_progress, BranchDone, ProgressFn, ScanError, ScanOptions, DEADLINE_NOTE,
