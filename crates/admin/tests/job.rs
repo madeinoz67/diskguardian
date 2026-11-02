@@ -181,14 +181,14 @@ fn an_unknown_field_is_refused() {
 }
 
 #[test]
-fn invalid_paths_are_refused_before_anything_is_walked() {
+fn malformed_paths_are_refused_before_anything_is_walked() {
     let readable = fixture_readme(1);
     let root = readable.path().display().to_string();
 
+    // Shape only: relative and traversing paths are malformed jobs.
     for (label, path) in [
         ("relative", "relative/path".to_string()),
         ("dotdot", format!("{root}/../..")),
-        ("missing", format!("{root}/no-such-child")),
     ] {
         let body = format!("{{\"version\":1,\"deadline_secs\":60,\"paths\":[\"{path}\"]}}");
         let dir = tempfile::tempdir().expect("tempdir");
@@ -206,6 +206,38 @@ fn invalid_paths_are_refused_before_anything_is_walked() {
             "{label}: a refused job must walk nothing"
         );
     }
+}
+
+/// A path that cannot be read is a RESULT, not a malformed job.
+///
+/// On macOS a SIP-protected root answers EPERM even to root, and `symlink_metadata` reports
+/// that identically to "missing". Refusing the job for it once failed a 57-path pass because
+/// one root was invisible, which is the opposite of the rule that unmeasurable space is
+/// reported rather than dropped.
+#[test]
+fn an_unreadable_path_becomes_a_restricted_result_not_a_refusal() {
+    let readable = fixture_readme(2);
+    let missing = format!("{}/no-such-child", readable.path().display());
+
+    let (dir, job_path) = job(&[readable.path().to_str().expect("utf8"), &missing], 60);
+    let out = run(&["--job", job_path.to_str().expect("utf8")]);
+
+    assert_eq!(code(&out), 0, "the job must complete: {}", stderr_of(&out));
+
+    let results = fs::read_to_string(dir.path().join("results.jsonl")).expect("results");
+    let lines: Vec<&str> = results.lines().collect();
+    assert_eq!(lines.len(), 2, "one result per path, including the unreadable one");
+
+    let second: serde_json::Value = serde_json::from_str(lines[1]).expect("json");
+    assert_eq!(
+        second["status"], "restricted",
+        "the unreadable path is reported as restricted: {second}"
+    );
+
+    let status: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.path().join("status.json")).expect("status"))
+            .expect("json");
+    assert_eq!(status["completed"], 2, "both paths produced a result");
 }
 
 #[test]

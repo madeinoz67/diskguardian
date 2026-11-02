@@ -333,8 +333,10 @@ fn run_one_job(
         )
     })?;
 
-    // Validate every path before walking any, so a bad job cannot leave a
-    // half-measured tree behind.
+    // Validate the SHAPE of every path before walking any, so a malformed job cannot
+    // leave a half-measured tree behind. Whether a path can be read is not a shape
+    // question: it is the walk's business, and a path that cannot be read becomes a
+    // restricted result for that one root rather than a refusal of the whole job.
     for path in &job.paths {
         validate_path(Path::new(path)).map_err(|reason| {
             (
@@ -425,18 +427,19 @@ fn write_status(
     }
 }
 
-/// Every job path must be absolute, free of `..`, and present. Walking any absolute
-/// path is not a compromise — this helper only measures — but a job that names
-/// nonsense is refused rather than half-run.
+/// Every job path must be absolute and free of `..`.
+///
+/// Existence is deliberately NOT checked here. `symlink_metadata` fails identically for a
+/// path that is gone and one the platform refuses to show, and on macOS the second case is
+/// common: SIP-protected roots answer EPERM even to root. Treating that as a malformed job
+/// failed a 57-path pass because one root was invisible — the exact opposite of the rule
+/// that unmeasurable space is reported rather than dropped.
 fn validate_path(path: &Path) -> Result<(), &'static str> {
     if !path.is_absolute() {
         return Err("must be absolute");
     }
     if path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err("must not contain '..'");
-    }
-    if std::fs::symlink_metadata(path).is_err() {
-        return Err("does not exist");
     }
     Ok(())
 }

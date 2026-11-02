@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 16/23
+progress: 17/25
 iteration: 1
 created: 2026-10-30
 ---
@@ -267,6 +267,20 @@ which is why the caveat rides every group. Grouping starts from the tree's alloc
 sizes, so a same-content pair whose *allocations* differ (an HFS+-compressed file beside a
 raw copy of the same bytes) is not detected — a stated limit, not a silent behaviour, and
 one that can only produce false negatives, never a false "duplicate" claim.
+
+### C25 — An unreadable root is a result, not a refused job  `[x]`
+A path the platform will not show (SIP, TCC) is measured as best it can be and reported as
+restricted for that one root, instead of failing the whole pass.
+**Probe:** `cargo test -p diskguardian-admin` —
+`an_unreadable_path_becomes_a_restricted_result_not_a_refusal` (a missing path yields a
+restricted result and `completed: 2`) and `malformed_paths_are_refused_before_anything_is_walked`
+(relative and `..` paths are still refused as malformed).
+**Falsifier:** a single protected root aborting a multi-root pass.
+**Why it happened (2026-11-02, live):** `symlink_metadata` reports EPERM exactly as it reports
+"missing", and SIP-protected roots answer EPERM even to root. A 57-path pass was refused
+because `/private/var/db/ConfigurationProfiles/Store` was invisible, which is the opposite of
+the rule that unmeasurable space is reported rather than dropped. Validation is now shape-only
+(absolute, no `..`); readability belongs to the walk.
 
 ## Test Strategy
 
