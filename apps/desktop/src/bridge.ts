@@ -14,7 +14,9 @@ import type {
   FreshnessReport,
   CleanupReport,
   EmptyReport,
+  PurgeReport,
   ScanResponse,
+  SnapshotReport,
   TrashStats,
   ViewNode,
   VolumeInfo,
@@ -86,6 +88,24 @@ export async function duplicates(
 export async function trashStats(): Promise<TrashStats> {
   if (!isTauri) return { path: '', bytes: 0, items: 0, supported: false }
   return invoke<TrashStats>('trash_stats')
+}
+
+/**
+ * What Time Machine is holding on the boot volume. The command takes no arguments: the
+ * volume is fixed on the Rust side, so no UI-chosen path can ever ride along.
+ */
+export async function localSnapshots(): Promise<SnapshotReport> {
+  if (!isTauri) return demoSnapshots()
+  return invoke<SnapshotReport>('local_snapshots')
+}
+
+/**
+ * Delete every local snapshot on the boot volume, as the user — never elevated. The
+ * boolean is the whole payload; there is no path to send.
+ */
+export async function purgeLocalSnapshots(confirmed: boolean): Promise<PurgeReport> {
+  if (!isTauri) return demoPurge()
+  return invoke<PurgeReport>('purge_local_snapshots', { confirmed })
 }
 
 export async function emptyTrash(confirmed: boolean): Promise<EmptyReport> {
@@ -402,4 +422,36 @@ function demoCollectorTotal(): number {
     const node = demoNodes.find((n) => n.node_id === id)
     return sum + (node?.bytes ?? 0)
   }, 0)
+}
+
+// Synthetic, and shaped exactly like `tmutil listlocalsnapshots /` answers: oldest first,
+// header omitted, one name per snapshot.
+const DEMO_SNAPSHOTS = [
+  { name: 'com.apple.TimeMachine.2026-11-01-085943.local', stamp: '2026-11-01-085943' },
+  { name: 'com.apple.TimeMachine.2026-11-02-080842.local', stamp: '2026-11-02-080842' },
+]
+
+function demoSnapshots(): SnapshotReport {
+  return {
+    supported: true,
+    mount: '/',
+    snapshots: DEMO_SNAPSHOTS.map((snapshot) => ({ ...snapshot })),
+    error: null,
+  }
+}
+
+/**
+ * The browser demo has no `tmutil`, so there is nothing to delete and nothing that could
+ * refuse. The report stays refused with everything still listed: a demo that claimed a
+ * successful purge would be a lie about the machine it runs on.
+ */
+function demoPurge(): PurgeReport {
+  return {
+    purged: false,
+    refused: true,
+    message:
+      'This is the browser demo: there is no tmutil here, so no snapshots were deleted. Run the app for the real answer.',
+    freed_bytes: 0,
+    remaining: DEMO_SNAPSHOTS.map((snapshot) => ({ ...snapshot })),
+  }
 }

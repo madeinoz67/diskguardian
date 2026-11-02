@@ -580,6 +580,19 @@ body.dragging #sunburst {
   cursor: pointer;
 }
 
+/* The one control in a panel header that cannot be taken back. */
+.cleanup-controls button.danger {
+  background: var(--danger);
+  border-color: transparent;
+  color: #fff;
+}
+
+.cleanup-controls button.danger:disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.35);
+  cursor: default;
+}
+
 .cleanup-body {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -677,6 +690,66 @@ body.dragging #sunburst {
   max-width: 900px;
 }
 
+/* ── local snapshots panel ────────────────────────────────────────────────────── */
+
+#snapshots {
+  position: fixed;
+  inset: var(--topbar-h) 0 var(--collector-h) 0;
+  z-index: 27;
+  background: #131315;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+}
+
+.snapshots-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  max-width: 900px;
+}
+
+/* A listing that could not be read is a failure, not a quiet empty answer. */
+#snapshots-note.failed {
+  color: #ffd9d6;
+  background: rgba(255, 69, 58, 0.1);
+  border: 1px solid rgba(255, 69, 58, 0.4);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* The purge outcome is the backend's own sentence — refusal text included — so it gets
+   the same full-size statement treatment as the duplicates caveat. */
+.snapshots-message {
+  margin: 0 0 14px;
+  padding: 8px 10px;
+  border-left: 3px solid rgba(255, 159, 10, 0.7);
+  border-radius: 0 6px 6px 0;
+  background: rgba(255, 159, 10, 0.08);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.snapshot-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.snapshot-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.snapshot-when {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .duplicates-headline {
   margin: 0 0 6px;
   font-size: 14px;
@@ -732,7 +805,8 @@ body.dragging #sunburst {
   background: rgba(255, 255, 255, 0.03);
 }
 
-.duplicate-keep {
+.duplicate-keep,
+.snapshot-new {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
