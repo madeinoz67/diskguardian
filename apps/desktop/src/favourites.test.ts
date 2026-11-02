@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { favouritesModel, MISSING_FAVOURITE_SENTENCE, type FavouriteRowModel } from './favourites'
+import {
+  favouritesModel,
+  framesInvalidatedByStarToggle,
+  MISSING_FAVOURITE_SENTENCE,
+  type FavouriteRowModel,
+} from './favourites'
 import { favourites, isTauri, setFavourite } from './bridge'
 import type { FavouritesReport } from './types'
 
@@ -77,6 +82,30 @@ describe('the favourites overview model', () => {
 
     const quiet = favouritesModel(report({ favourites: [{ path: '/a', exists: true }] }))
     expect(quiet.notice).toBeNull()
+  })
+})
+
+describe('which frames a star toggle makes stale', () => {
+  test('a heading star also invalidates the parent level, whose child mark it changes', () => {
+    // up() re-renders the parent from its cache without refetching; a heading star
+    // that did not invalidate it left a hollow star on a starred folder.
+    expect(framesInvalidatedByStarToggle([null, 5], 5)).toEqual([1, 0])
+  })
+
+  test('a heading star on the scan root has no parent level', () => {
+    expect(framesInvalidatedByStarToggle([null], null)).toEqual([0])
+  })
+
+  test('deeper stacks invalidate the frame and the one directly below it', () => {
+    expect(framesInvalidatedByStarToggle([null, 2, 5, 9], 5)).toEqual([2, 1])
+  })
+
+  test('a row star of a child with no frame of its own touches only the level viewed', () => {
+    expect(framesInvalidatedByStarToggle([null, 5], 9)).toEqual([1])
+  })
+
+  test('an empty stack has nothing to invalidate', () => {
+    expect(framesInvalidatedByStarToggle([], 9)).toEqual([])
   })
 })
 

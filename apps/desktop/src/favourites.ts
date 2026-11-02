@@ -45,3 +45,24 @@ export function favouritesModel(report: FavouritesReport): FavouritesModel {
     notice: report.notice !== null && report.notice.length > 0 ? report.notice : null,
   }
 }
+
+/**
+ * Which frames' cached marks a star toggle makes stale, as indices into the stack.
+ *
+ * A row star changes only the level being viewed (its children marks). A heading star
+ * changes one more thing the design's staleness argument missed: the toggled folder is
+ * a *child* of the level below, and `up()` re-renders that level from its cache
+ * without refetching — so the parent's child mark must be refreshed at toggle time or
+ * a starred folder shows a hollow star after climbing. A toggled folder with no frame
+ * of its own on the stack touches only the top frame.
+ */
+export function framesInvalidatedByStarToggle(
+  stack: ReadonlyArray<number | null>,
+  toggled: number | null,
+): number[] {
+  const own = stack.lastIndexOf(toggled)
+  if (own === -1) {
+    return stack.length > 0 ? [stack.length - 1] : []
+  }
+  return own > 0 ? [own, own - 1] : [own]
+}

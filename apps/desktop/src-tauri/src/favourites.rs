@@ -9,8 +9,11 @@
 //! Path identity is the canonical form — the C17 lesson. `Tree::path_of` returns the
 //! literal walked path while the deletion guard canonicalises, and comparing the two
 //! literally once made delete prune nothing. Favourites key on `fs::canonicalize`
-//! best-effort at write, and canonicalise both sides at comparison, so `/tmp/x` and
-//! `/private/tmp/x` are one entry.
+//! best-effort at write, canonicalise both sides at comparison, canonicalise the
+//! removal key too (the legend's unstar passes the walked spelling, not the store's),
+//! and reconcile stored spellings when the store loads — so `/tmp/x` and
+//! `/private/tmp/x` are one entry at every door, including one that was stored as a
+//! literal while its folder was gone and has since come back.
 //!
 //! **Stated limit:** `fs::canonicalize` does not case-fold on macOS, so `/Users/NAME/x`
 //! and `/Users/name/x` remain two entries on a case-insensitive volume. This can only
@@ -38,8 +41,9 @@ pub struct FavouriteEntry {
 #[derive(Debug, Clone, Serialize)]
 pub struct FavouritesReport {
     pub favourites: Vec<FavouriteEntry>,
-    /// Corrupt-store recovery, shown as visible text. A failed read is never allowed
-    /// to read as "no favourites".
+    /// Why the list cannot be trusted right now — a corrupt store that was recovered,
+    /// or a store that could not be read and was left untouched. Shown as visible
+    /// text: a failed read is never allowed to read as "no favourites".
     pub notice: Option<String>,
 }
 
@@ -69,18 +73,31 @@ pub struct Favourites {
     path: Option<PathBuf>,
     /// Canonical-at-write keys, in insertion order.
     paths: Vec<String>,
+    /// Whether a healthy read of the store file has happened this process. One read is
+    /// the authority: re-reading on every command would discard any change a failed
+    /// write left in the list, which is exactly what the retention in `set` promises
+    /// not to do. An unreadable store leaves this `false`, so the next command retries.
     loaded: bool,
     /// Set when a corrupt store was recovered this load.
     notice: Option<String>,
+    /// Set when the last read could not read the store at all (permissions, I/O): the
+    /// file is left untouched, mutations refuse until a read succeeds, and every
+    /// command retries. A blip is not corruption — the list still exists on disk.
+    unreadable: Option<String>,
 }
 
 impl Favourites {
     /// Test seam: point the store at a chosen file before its first use, the
     /// `admin_launch` pattern. Production resolves the app data directory on the first
     /// command instead, because `AppState::default()` runs in `configure` before an
-    /// `AppHandle` exists.
+    /// `AppHandle` exists. Everything an earlier file established is forgotten: the
+    /// new file has never been read by this process.
     pub fn set_path(&mut self, path: PathBuf) {
         self.path = Some(path);
+        self.paths.clear();
+        self.loaded = false;
+        self.notice = None;
+        self.unreadable = None;
     }
 
     /// Resolve the store location from the app handle, once.
@@ -97,22 +114,64 @@ impl Favourites {
         Ok(())
     }
 
-    /// Read the store once. Malformed JSON and unknown versions take the corrupt path:
-    /// the file is renamed aside, the list starts empty, and the notice says so.
+    /// Read the store. Four outcomes, four doctrines:
+    ///
+    /// - A healthy read installs the list, **reconciled**: every stored spelling is
+    ///   re-keyed to its canonical form where the folder exists again, and duplicates
+    ///   collapse. Write-time keying cannot repair a literal that was stored while its
+    ///   folder was gone, so load is where two spellings of one restored folder become
+    ///   one row.
+    /// - `NotFound` is a fresh machine's first read: an empty store, no drama.
+    /// - Malformed JSON or an unknown version is corruption: the file is renamed aside,
+    ///   the list starts empty, the notice says so (C27 — a failed read is never
+    ///   allowed to read as "no favourites").
+    /// - Any other read failure (permissions, I/O) is *not* corruption: the file is
+    ///   left untouched, `unreadable` is set so mutations refuse, and the next command
+    ///   retries. Renaming a good file aside because of a permission blip once
+    ///   evicted an intact list permanently; it does not again.
+    ///
+    /// A healthy read happens once per process: afterwards the in-memory list is the
+    /// authority, and re-reading would discard any change a failed write left there.
     fn load(&mut self) {
         let Some(path) = self.path.clone() else {
             // No location yet — nothing has resolved it, so there is nothing to read.
             return;
         };
-        self.loaded = true;
+        if self.loaded {
+            return;
+        }
         match std::fs::read_to_string(&path) {
             Ok(text) => match serde_json::from_str::<StoreFile>(&text) {
-                Ok(store) if store.version == 1 => self.paths = store.paths,
-                _ => self.recover(&path),
+                Ok(store) if store.version == 1 => {
+                    self.paths = reconcile(store.paths);
+                    self.notice = None;
+                    self.unreadable = None;
+                    self.loaded = true;
+                }
+                _ => {
+                    self.recover(&path);
+                    self.loaded = true;
+                }
             },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => self.recover(&path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.paths.clear();
+                self.unreadable = None;
+                self.loaded = true;
+            }
+            Err(error) => {
+                self.paths.clear();
+                self.notice = None;
+                self.unreadable = Some(format!(
+                    "the favourites list could not be read ({error}); it was left untouched"
+                ));
+            }
         }
+    }
+
+    /// Whether nothing is starred — the answer `favourite_marks` can give without
+    /// touching the scan tree at all.
+    fn is_empty(&self) -> bool {
+        self.paths.is_empty()
     }
 
     /// A store that cannot be understood is preserved beside a fresh one and reported.
@@ -161,18 +220,29 @@ impl Favourites {
         self.paths.iter().any(|stored| canonical(stored) == key)
     }
 
-    /// Add (canonical, no-op on a duplicate) or remove (exact stored string). Persists
+    /// Add (canonical, no-op on a duplicate) or remove. Both directions meet the store
+    /// on canonical ground: the overview passes the store's own string back, but the
+    /// legend's unstar passes `path_of`'s literal walked spelling, and a row keyed
+    /// `/private/var/…` must still leave to an unstar spelled `/var/…` (the C17
+    /// mismatch; comparing the literal once made that unstar a silent no-op). Persists
     /// before returning; on a write failure the error names it, and the in-memory list
-    /// keeps the change so the next successful save is not silently lost.
+    /// keeps the change — `load` reads a healthy store once per process, so the next
+    /// successful save carries it rather than silently losing it.
     fn set(&mut self, path: String, add: bool) -> Result<Vec<String>, String> {
+        if let Some(reason) = &self.unreadable {
+            // Writing now would replace a file this process has never managed to read —
+            // the eviction the read path refuses to do, done by the write path instead.
+            return Err(format!(
+                "favourites could not be changed while the store cannot be read ({reason})"
+            ));
+        }
+        let key = canonical(&path);
         if add {
-            let key = canonical(&path);
             if !self.contains(&key) {
                 self.paths.push(key);
             }
         } else {
-            // The UI passes the store's own string back verbatim.
-            self.paths.retain(|stored| *stored != path);
+            self.paths.retain(|stored| canonical(stored) != key);
         }
         self.persist()?;
         Ok(self.paths.clone())
@@ -186,6 +256,20 @@ fn canonical(path: &str) -> String {
     std::fs::canonicalize(path)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| path.to_string())
+}
+
+/// Reconcile stored spellings: re-key each to its canonical form where the folder
+/// exists again, then keep the first of each. A literal stored while its folder was
+/// gone and an older canonical spelling of the same folder are then one row, which is
+/// the C28 promise; two different missing folders stay two rows, because while they
+/// are gone nothing can prove them the same.
+fn reconcile(paths: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    paths
+        .into_iter()
+        .map(|path| canonical(&path))
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
 }
 
 /// Shape only, the exact rule C25 taught: absolute, no `..` component. Whether the
@@ -202,6 +286,24 @@ fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Favourites>, Strin
         .favourites
         .lock()
         .map_err(|_| "favourites state is poisoned by an earlier panic".to_string())
+}
+
+/// Map `scan_id` plus an optional node id to the scan and a node index, with the
+/// commands' typed errors. Pure lookup — no paths are built, which is what lets a
+/// command validate first and do its expensive work only when there is any to do.
+fn resolve_node<'a>(
+    scans: &'a std::collections::HashMap<String, crate::state::Scan>,
+    scan_id: &str,
+    node_id: Option<u64>,
+) -> Result<(&'a crate::state::Scan, usize), String> {
+    let scan = scans
+        .get(scan_id)
+        .ok_or_else(|| "unknown scan".to_string())?;
+    let node = node_id.map_or(scan.tree.root, |id| id as usize);
+    if node >= scan.tree.nodes.len() {
+        return Err("node is not part of this scan".to_string());
+    }
+    Ok((scan, node))
 }
 
 /// Every favourite with an existence stat, plus the recovery notice. The stat follows
@@ -225,14 +327,16 @@ pub fn favourites<R: tauri::Runtime>(
                 exists: Path::new(path).exists(),
             })
             .collect(),
-        notice: store.notice.clone(),
+        notice: store.notice.clone().or_else(|| store.unreadable.clone()),
     })
 }
 
-/// Which of a node's tree children are favourites, and whether the node itself is one.
-/// Read-only over the scan tree plus the already-loaded store — the same cheapness
-/// `revalidate` relies on. Children the legend prunes away are harmless: the frontend
-/// only consults marks for rows it draws.
+/// Which of the children the view draws are favourites, and whether the node itself is
+/// one. This runs on every screen change, so it is bounded by what the screen can
+/// show, never by the tree: an empty store (the common case) answers without touching
+/// the tree at all, and otherwise marks are computed over `build_view`'s children —
+/// at most `max_children` rows — never the full child set. Canonicalising every tree
+/// child of a 100k-entry folder measured in seconds here, on a synchronous command.
 #[tauri::command]
 pub fn favourite_marks<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -240,26 +344,61 @@ pub fn favourite_marks<R: tauri::Runtime>(
     scan_id: String,
     node_id: Option<u64>,
 ) -> Result<FavouriteMarks, String> {
-    // The scan tree is read and released first, so the two locks are never held together.
-    let scans = crate::commands::lock_scans(&state)?;
-    let scan = scans.get(&scan_id).ok_or("unknown scan")?;
-    let node = node_id.map_or(scan.tree.root, |id| id as usize);
-    if node >= scan.tree.nodes.len() {
-        return Err("node is not part of this scan".to_string());
+    // Validate first, by pure lookup and with no paths built, so the typed errors for
+    // unknown scans and foreign nodes keep their shape on every path below.
+    {
+        let scans = crate::commands::lock_scans(&state)?;
+        resolve_node(&scans, &scan_id, node_id)?;
     }
-    let self_path = scan.tree.path_of(node).display().to_string();
-    let child_paths: Vec<(u64, String)> = scan
-        .tree
-        .node(node)
-        .children
-        .iter()
-        .map(|&child| (child as u64, scan.tree.path_of(child).display().to_string()))
-        .collect();
-    drop(scans);
 
-    let mut store = lock(&state)?;
-    store.resolve(&app)?;
-    store.load();
+    // The two mutexes are never held together: the favourites lock is taken and
+    // released, then the scans lock, then the favourites lock again.
+    let empty = {
+        let mut store = lock(&state)?;
+        store.resolve(&app)?;
+        store.load();
+        store.is_empty()
+    };
+    if empty {
+        // Nothing is starred anywhere: no mark can be true, and canonicalising the tree
+        // to prove it is exactly the cost this exists to skip.
+        return Ok(FavouriteMarks {
+            self_: false,
+            children: Vec::new(),
+        });
+    }
+
+    // Paths for the node itself and the children the view draws — the same pruning the
+    // legend renders, so a folder with thousands of children costs a handful of
+    // `path_of` calls, and a child merged into the "smaller objects" petal (no row, no
+    // star to draw) is never canonicalised at all.
+    let (self_path, child_paths): (String, Vec<(u64, String)>) = {
+        let scans = crate::commands::lock_scans(&state)?;
+        let (scan, node) = resolve_node(&scans, &scan_id, node_id)?;
+        let view = diskguardian_core::build_view(
+            &scan.tree,
+            node,
+            &diskguardian_core::ViewOptions::default(),
+        );
+        let drawn: Vec<u64> = view
+            .first()
+            .map(|root| {
+                root.children
+                    .iter()
+                    .filter_map(|&index| view[index as usize].node_id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        (
+            scan.tree.path_of(node).display().to_string(),
+            drawn
+                .into_iter()
+                .map(|id| (id, scan.tree.path_of(id as usize).display().to_string()))
+                .collect(),
+        )
+    };
+
+    let store = lock(&state)?;
     Ok(FavouriteMarks {
         self_: store.contains(&canonical(&self_path)),
         children: child_paths
@@ -282,11 +421,7 @@ pub fn favourite_node<R: tauri::Runtime>(
     add: bool,
 ) -> Result<Vec<String>, String> {
     let scans = crate::commands::lock_scans(&state)?;
-    let scan = scans.get(&scan_id).ok_or("unknown scan")?;
-    let node = node_id.map_or(scan.tree.root, |id| id as usize);
-    if node >= scan.tree.nodes.len() {
-        return Err("node is not part of this scan".to_string());
-    }
+    let (scan, node) = resolve_node(&scans, &scan_id, node_id)?;
     let target = scan.tree.node(node);
     if target.kind == NodeKind::File {
         return Err("only folders can be favourites".to_string());
@@ -294,7 +429,8 @@ pub fn favourite_node<R: tauri::Runtime>(
     if target.missing {
         return Err("that folder is no longer on disk".to_string());
     }
-    // `path_of` returns the literal walked path; the store canonicalises at write.
+    // `path_of` returns the literal walked path; the store canonicalises at write and,
+    // since the unstar fix, at removal too.
     let path = scan.tree.path_of(node).display().to_string();
     drop(scans);
 

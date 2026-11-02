@@ -13,7 +13,7 @@ import { duplicatesModel } from './duplicates'
 import type { DuplicateGroupModel } from './duplicates'
 import { purgeMessage, snapshotsModel } from './snapshots'
 import type { SnapshotsModel } from './snapshots'
-import { favouritesModel } from './favourites'
+import { favouritesModel, framesInvalidatedByStarToggle } from './favourites'
 import type { FavouriteRowModel } from './favourites'
 
 function el<T extends HTMLElement>(id: string): T {
@@ -130,8 +130,9 @@ interface Frame {
   view: ViewNode[]
   /**
    * Favourite marks for this level, cached when the frame was entered. `up()` reuses
-   * cached frames and does not re-fetch: marks only change through star clicks on the
-   * level being viewed, which refresh the current frame.
+   * cached frames and does not re-fetch, so every star toggle must refresh the frames
+   * it touches at toggle time — including the parent level, whose child mark a
+   * heading star changes (`framesInvalidatedByStarToggle` names them).
    */
   marks: FavouriteMarks | null
 }
@@ -193,10 +194,13 @@ async function measureRestricted(): Promise<void> {
     // line below would subtract against the wrong baseline.
     if (report.scan_id !== state.scanId) return
     // The backend grafted the measured subtrees and returned a fresh whole-tree view.
-    state.stack = [{ nodeId: null, view: report.view, marks: null }]
+    const grafted: Frame = { nodeId: null, view: report.view, marks: null }
+    state.stack = [grafted]
     sunburst.setView(report.view)
     renderCrumbs()
     renderLegend()
+    // The fresh frame has no marks yet; fetch them so the stars survive the graft.
+    void refreshFrameMarks(grafted)
     setStatus(adminStatus(Math.max(0, report.bytes - adminBeforeBytes), report.still_restricted))
     hideAdminMeasurement()
   } catch (error) {
@@ -308,7 +312,8 @@ async function scanPath(path: string): Promise<void> {
     stopPartial()
     state.scanId = result.scan_id
     state.rootPath = path
-    state.stack = [{ nodeId: null, view: result.view, marks: null }]
+    const rootFrame: Frame = { nodeId: null, view: result.view, marks: null }
+    state.stack = [rootFrame]
     state.collectedTotal = 0
     state.collectedCount = 0
     state.collectedIds = []
@@ -319,7 +324,7 @@ async function scanPath(path: string): Promise<void> {
     updateCollector()
     // Stars for this level arrive after the first paint; the legend re-renders when
     // they do. A missing star glyph is honest — an unconfirmed one would not be.
-    void refreshFavouriteMarks()
+    void refreshFrameMarks(rootFrame)
 
     // Probe the collector IPC straight away: if a multi-argument command is miswired, that
     // is visible now rather than the first time somebody presses +.
@@ -354,7 +359,10 @@ async function scanPath(path: string): Promise<void> {
       // prompt the user has effectively already given.
       const authorised = await bridge.adminAuthorised().catch(() => false)
       if (authorised) {
-        state.stack = [{ nodeId: null, view: result.view, marks: null }]
+        // Reuse the scan's own frame, not a fresh one: the marks fetch already in
+        // flight writes to this object, and a duplicate here would orphan it and lose
+        // the stars if the measurement is declined.
+        state.stack = [rootFrame]
         void measureRestricted()
       } else {
         offerAdminMeasurement(result.bytes)
@@ -386,12 +394,13 @@ async function scanPath(path: string): Promise<void> {
 async function navigate(nodeId: number): Promise<void> {
   try {
     const view = await bridge.view(state.scanId, nodeId)
-    state.stack.push({ nodeId, view, marks: null })
+    const frame: Frame = { nodeId, view, marks: null }
+    state.stack.push(frame)
     sunburst.setView(view)
     renderCrumbs()
     renderLegend()
     updateHoverLabel(null)
-    void refreshFavouriteMarks()
+    void refreshFrameMarks(frame)
   } catch (error) {
     setStatus(`Could not open that item: ${String(error)}`)
   }
@@ -631,15 +640,26 @@ function favouriteStar(marked: boolean, onToggle: () => void): HTMLButtonElement
 
 /**
  * Star or unstar a node of the current scan. The response is the path list, not marks,
- * so the level's marks are re-queried afterwards rather than patched locally — the
- * store's keys are canonical spellings the frontend cannot reconstruct, and a
+ * so the affected frames' marks are re-queried afterwards rather than patched locally —
+ * the store's keys are canonical spellings the frontend cannot reconstruct, and a
  * self-computed star that disagreed with the store would be worse than one extra call.
+ * A heading star touches two levels (its own and the parent whose child mark it
+ * changes); `up()` re-renders the parent from cache, so both are refreshed here.
  */
 async function toggleFavourite(nodeId: number | null, marked: boolean): Promise<void> {
   if (!state.scanId) return
   try {
     await bridge.favouriteNode(state.scanId, nodeId, !marked)
-    await refreshFavouriteMarks()
+    const stale = framesInvalidatedByStarToggle(
+      state.stack.map((frame) => frame.nodeId),
+      nodeId,
+    )
+    await Promise.all(
+      stale
+        .map((index) => state.stack[index])
+        .filter((frame): frame is Frame => frame !== undefined)
+        .map((frame) => refreshFrameMarks(frame)),
+    )
   } catch (error) {
     // A broken control must not look like a working one (the C18 lesson).
     showError(`Could not update favourites: ${String(error)}`)
@@ -647,13 +667,12 @@ async function toggleFavourite(nodeId: number | null, marked: boolean): Promise<
 }
 
 /**
- * Fetch marks for the level being viewed and cache them on that frame. A stale answer
- * may still land on a superseded frame — that is harmless, it is a cache entry nobody
- * reads any more — but it must not repaint a screen that has moved on.
+ * Fetch marks for one frame and cache them on it. A stale answer may still land on a
+ * superseded frame — that is harmless, it is a cache entry nobody reads any more — but
+ * it must not repaint a screen that has moved on, so only the top frame re-renders.
  */
-async function refreshFavouriteMarks(): Promise<void> {
-  const frame = state.stack[state.stack.length - 1]
-  if (!state.scanId || !frame) return
+async function refreshFrameMarks(frame: Frame): Promise<void> {
+  if (!state.scanId) return
   try {
     const marks = await bridge.favouriteMarks(state.scanId, frame.nodeId)
     frame.marks = marks
@@ -694,7 +713,16 @@ function updateHoverLabel(arc: Arc | null): void {
         : node.kind === 'file'
           ? 'file'
           : 'folder'
-  hoverLabel.innerHTML = `<strong>${node.name}</strong><span>${formatBytes(node.bytes)} · ${kind}</span>`
+  // textContent, never markup: `node.name` is a disk-derived string, and a folder
+  // named to look like HTML is data, not a document. This label previously built its
+  // content with an HTML template string — a pre-existing defect, folded here because
+  // the R8 increment's heading fix claimed this class for the file while this sibling
+  // still shipped it, with `csp: null` in tauri.conf.json leaving nothing to catch it.
+  const labelName = document.createElement('strong')
+  labelName.textContent = node.name
+  const labelDetail = document.createElement('span')
+  labelDetail.textContent = `${formatBytes(node.bytes)} · ${kind}`
+  hoverLabel.replaceChildren(labelName, labelDetail)
   hoverLabel.title = node.name
 }
 

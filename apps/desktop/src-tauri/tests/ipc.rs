@@ -1554,6 +1554,309 @@ mod favourites {
         );
     }
 
+    /// The legend's unstar passes `path_of`'s literal walked spelling, while the store
+    /// holds the canonical one. Every `tempfile` fixture on macOS is rooted through
+    /// `/var`, so the tree spells its paths `/var/folders/…` and the store keys them
+    /// `/private/var/folders/…`; an unstar that compared the literal matched nothing
+    /// and answered `Ok` with the star still lit. macOS-gated: on a platform whose
+    /// temp root is already canonical the two spellings are one string, and this test
+    /// would pass with the defect live.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unstarring_from_the_legend_removes_the_canonical_row() {
+        let app = build();
+        set_store(&app, &store_dir());
+        let webview = webview(&app);
+        let (scan_id, root) = seed_scan(&app);
+        let child = child_named(&webview, &scan_id, root, "sub");
+
+        let stored = star_node(&webview, &scan_id, child, true).expect("star from the legend");
+        let stored_path = stored[0].as_str().expect("the store's own string");
+        assert!(
+            stored_path.starts_with("/private/var/"),
+            "the premise: the store canonicalised under /private/var while the tree \
+             walks /var — without it this test would pass vacuously ({stored_path})"
+        );
+
+        let after = star_node(&webview, &scan_id, child, false).expect("unstar must answer");
+        assert!(
+            after.as_array().expect("list").is_empty(),
+            "the legend's unstar removed the row: {after}"
+        );
+
+        let report = call(&webview, "favourites", serde_json::json!({})).expect("favourites");
+        assert!(
+            report["favourites"].as_array().expect("entries").is_empty(),
+            "and it stayed removed: {report}"
+        );
+    }
+
+    /// C28's falsifier, replayed across relaunches: star the real spelling, let the
+    /// folder vanish, star the alias (stored as a literal because nothing is there to
+    /// canonicalise), restore the folder — the store now holds two spellings of one
+    /// existing folder. Loading is where they must reconcile: normalise every key,
+    /// keep the first of each.
+    #[cfg(unix)]
+    #[test]
+    fn two_spellings_of_one_restored_folder_collapse_to_one_row() {
+        let dir = store_dir();
+        let (alias, real) = symlinked_pair();
+
+        let first = build();
+        set_store(&first, &dir);
+        let first_view = webview(&first);
+        set_favourite(&first_view, &real.display().to_string(), true)
+            .expect("star the real spelling");
+        drop(first_view);
+        drop(first);
+
+        // The folder vanishes; the alias spelling now canonicalises to nothing, so it
+        // is stored as the literal.
+        fs::remove_dir_all(&real).expect("remove the folder");
+        let second = build();
+        set_store(&second, &dir);
+        let second_view = webview(&second);
+        set_favourite(&second_view, &alias.display().to_string(), true).expect("star the alias");
+        drop(second_view);
+        drop(second);
+
+        // Back on disk: both stored rows exist and canonicalise to the same directory.
+        fs::create_dir(&real).expect("restore the folder");
+        let third = build();
+        set_store(&third, &dir);
+        let third_view = webview(&third);
+        let report = call(&third_view, "favourites", serde_json::json!({})).expect("favourites");
+        assert_eq!(
+            report["favourites"].as_array().expect("entries").len(),
+            1,
+            "two spellings of one folder, one row: {report}"
+        );
+        assert_eq!(
+            report["notice"],
+            serde_json::Value::Null,
+            "reconciliation is routine, not a recovery: {report}"
+        );
+    }
+
+    /// A read error is not corruption. `chmod 000` on an intact store used to take the
+    /// corrupt path: the file was renamed aside and the list was gone for good, even
+    /// after the permissions came back. C27's doctrine applies instead — report the
+    /// failure, leave the file untouched, refuse writes until a read succeeds — and
+    /// the list comes back when the cause passes.
+    #[cfg(unix)]
+    #[test]
+    fn a_read_error_is_reported_not_an_eviction() {
+        let dir = store_dir();
+        let holder = tempfile::tempdir().expect("tempdir");
+        let target = holder.path().join("precious");
+        fs::create_dir(&target).expect("mkdir");
+
+        let app = build();
+        set_store(&app, &dir);
+        let view = webview(&app);
+        set_favourite(&view, &target.display().to_string(), true).expect("star");
+        drop(view);
+        drop(app);
+
+        let store_file = dir.join("favourites.json");
+        fs::set_permissions(&store_file, fs::Permissions::from_mode(0o000)).expect("lock");
+
+        let blinded = build();
+        set_store(&blinded, &dir);
+        let blinded_view = webview(&blinded);
+        let report = call(&blinded_view, "favourites", serde_json::json!({}))
+            .expect("the report still answers");
+        let notice = report["notice"].as_str().unwrap_or_default();
+        assert!(
+            !notice.is_empty(),
+            "an unreadable list is visible text, never a quiet empty one: {report}"
+        );
+        assert!(
+            notice.contains("left untouched"),
+            "the notice must say the file was not reset: {notice}"
+        );
+
+        // A mutation must refuse rather than overwrite a file it could not read.
+        let refusal = set_favourite(
+            &blinded_view,
+            &holder.path().join("other").display().to_string(),
+            true,
+        );
+        assert!(
+            refusal.is_err(),
+            "writes refuse while the store is unreadable: {refusal:?}"
+        );
+
+        // Nothing was renamed aside, and the permissions coming back bring the list back.
+        let aside: Vec<String> = fs::read_dir(&dir)
+            .expect("store dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("favourites.json.corrupt-"))
+            .collect();
+        assert!(
+            aside.is_empty(),
+            "an intact file was evicted as if corrupt: {aside:?}"
+        );
+
+        fs::set_permissions(&store_file, fs::Permissions::from_mode(0o644)).expect("unlock");
+        drop(blinded_view);
+        drop(blinded);
+
+        let restored = build();
+        set_store(&restored, &dir);
+        let restored_view = webview(&restored);
+        let after = call(&restored_view, "favourites", serde_json::json!({})).expect("favourites");
+        let entries = after["favourites"].as_array().expect("entries");
+        assert_eq!(entries.len(), 1, "the list survived the blip: {after}");
+        assert!(
+            entries[0]["path"]
+                .as_str()
+                .unwrap_or_default()
+                .ends_with("precious"),
+            "it is the same favourite: {after}"
+        );
+    }
+
+    /// The retention promise: a write that fails keeps its change in memory, and the
+    /// next successful save carries it. `load` used to re-read the store on every
+    /// command, so an intact store file discarded exactly that change on the next
+    /// call — the comment promised retention the code did not deliver. The `loaded`
+    /// flag now does its job: one healthy read per process, the in-memory list is the
+    /// authority between reads.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_is_retained_until_the_next_save_succeeds() {
+        let dir = store_dir();
+        let holder = tempfile::tempdir().expect("tempdir");
+        let kept = holder.path().join("kept-anyway");
+        let lost = holder.path().join("written-during-the-outage");
+        fs::create_dir(&kept).expect("mkdir");
+        fs::create_dir(&lost).expect("mkdir");
+
+        let app = build();
+        set_store(&app, &dir);
+        let webview = webview(&app);
+        set_favourite(&webview, &kept.display().to_string(), true).expect("star");
+
+        // Take write permission off the store directory: the atomic write fails, loudly.
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).expect("lock");
+        let failed = set_favourite(&webview, &lost.display().to_string(), true);
+        assert!(failed.is_err(), "the save must fail loudly: {failed:?}");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).expect("unlock");
+
+        // The change is still in the list — a re-read here used to drop it. The store
+        // keys canonical spellings, so the expectations canonicalise too.
+        let canonical = |p: &Path| {
+            fs::canonicalize(p)
+                .expect("canonical")
+                .display()
+                .to_string()
+        };
+        let report = call(&webview, "favourites", serde_json::json!({})).expect("favourites");
+        let paths: Vec<&str> = report["favourites"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .map(|entry| entry["path"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            paths,
+            vec![canonical(&kept), canonical(&lost)],
+            "the failed write's change is retained: {report}"
+        );
+
+        // And the next save carries both truths.
+        let after = set_favourite(&webview, &kept.display().to_string(), false).expect("unstar");
+        assert_eq!(
+            after,
+            serde_json::json!([canonical(&lost)]),
+            "the retained change landed with the new one: {after}"
+        );
+    }
+
+    /// Marks are asked for the children the view draws, never the whole tree: a folder
+    /// with hundreds of children draws at most `max_children` rows, and canonicalising
+    /// the pruned-away tail cost seconds on every screen change while holding the
+    /// scans lock. The starred lightest child lives inside the "smaller objects" petal
+    /// — no row draws it, so no mark may name it.
+    #[test]
+    fn marks_name_only_the_children_the_view_draws() {
+        let app = build();
+        set_store(&app, &store_dir());
+        let webview = webview(&app);
+
+        // 300 folders of strictly increasing weight: the view keeps the 256 heaviest
+        // and merges the 44 lightest into the aggregate petal.
+        let holder = tempfile::tempdir().expect("tempdir");
+        for i in 0..300usize {
+            let folder = holder.path().join(format!("d{i:03}"));
+            fs::create_dir(&folder).expect("mkdir");
+            fs::write(folder.join("payload.bin"), vec![7u8; (i + 1) * 1024]).expect("write");
+        }
+        let tree = diskguardian_core::scan(holder.path(), &Default::default()).expect("scan");
+        let root = tree.root as u64;
+        let pruned = tree
+            .nodes
+            .iter()
+            .position(|n| n.name == "d000")
+            .expect("lightest child") as u64;
+        let drawn = tree
+            .nodes
+            .iter()
+            .position(|n| n.name == "d299")
+            .expect("heaviest child") as u64;
+        std::mem::forget(holder);
+        let scan_id = app.state::<AppState>().insert(tree);
+
+        star_node(&webview, &scan_id, pruned, true).expect("star the pruned child");
+        star_node(&webview, &scan_id, drawn, true).expect("star a drawn child");
+
+        let marks = call(
+            &webview,
+            "favourite_marks",
+            serde_json::json!({ "scanId": &scan_id, "nodeId": root }),
+        )
+        .expect("marks");
+        let ids: Vec<u64> = marks["children"]
+            .as_array()
+            .expect("children")
+            .iter()
+            .filter_map(|value| value.as_u64())
+            .collect();
+        assert!(
+            !ids.contains(&pruned),
+            "a child the view prunes into the aggregate has no row, so no mark: {marks}"
+        );
+        assert!(
+            ids.contains(&drawn),
+            "a drawn, starred child is marked: {marks}"
+        );
+
+        // The premise, checked rather than assumed: the view prunes the lightest and
+        // draws the heaviest, exactly as the marks must.
+        let view = call(
+            &webview,
+            "view",
+            serde_json::json!({ "scanId": &scan_id, "nodeId": root }),
+        )
+        .expect("view");
+        let drawn_ids: Vec<u64> = view
+            .as_array()
+            .expect("view")
+            .iter()
+            .filter_map(|node| node["node_id"].as_u64())
+            .collect();
+        assert!(
+            !drawn_ids.contains(&pruned),
+            "premise: the view really prunes d000"
+        );
+        assert!(
+            drawn_ids.contains(&drawn),
+            "premise: the view really draws d299"
+        );
+    }
+
     #[test]
     fn unstarring_removes_the_entry() {
         let holder = tempfile::tempdir().expect("tempdir");
