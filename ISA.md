@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 18/26
+progress: 19/26
 iteration: 1
 created: 2026-10-30
 ---
@@ -154,7 +154,7 @@ loses exactly the deleted bytes, tree arithmetic still holds, the scan root cann
 forgotten) plus the existing Trash-recovery test.
 **Falsifier:** a delete that triggers a full rescan, or a parent whose total does not shrink.
 
-### C18 — Collecting from the list actually works  `[ ]`
+### C18 — Collecting from the list actually works  `[x]`
 Clicking the `+` beside a legend row adds that node to the collector: the collector amount
 rises, the row switches to a tick, the Delete button enables, and the petal is outlined.
 **Reported failing 2026-10-30 by the principal:** clicking `+` changed nothing.
@@ -173,6 +173,19 @@ passing. The backend of this feature works; the defect is in the frontend click 
 the new banner exists to name it. Also fixed here: collecting the scan root itself is now
 refused, because the guard will never delete it, so it only built a collector that could not
 be emptied.
+**2026-11-02 — CONFIRMED, and the frontend was never broken.** One click of the `+` beside
+`alpha` in the contents list of the built app, scanned against a two-folder fixture: the
+collector went from `0 bytes` to `4 MB` with `in the collector · 1 item`, the row's `+`
+became `✓`, the Delete button went from grey to enabled red, and the petal drew its
+collected outline. The four sub-claims all held in the one interaction, so nothing was
+changed to make it pass. What was actually wrong on 2026-10-30 was the delete path — the
+misaligned node ids of C17 — and the report "collecting does nothing" was made while that
+defect was live. The fix for C17, and the IPC suite that arrived with it, are the whole
+story; the inferred IPC argument-binding fault never existed.
+**Evidence:** `/tmp/dg-c18.png` (screenshot, pixels inspected). The commands behind the
+click were already pinned by `src-tauri/tests/ipc.rs`.
+**Standing probe for regressions:** `cargo test -p diskguardian-app --test ipc` — the
+`collect` tests fail loudly if the command surface changes under the button.
 
 ### C19 — The scan target is chosen, not assumed  `[x]`
 The app opens on a "Disks and folders" screen listing every mounted volume with a usage gauge
@@ -360,8 +373,9 @@ and clone detection remains R6.
 Ordered by space actually found on a real Mac, not by polish. Each becomes a claim when its
 increment opens.
 
-- **R1 — C18**: collecting from the list. Backend proven by the IPC suite; the frontend
-  path has not reproduced since the delete fix, so this needs one click to confirm or refute.
+- **R1 — C18**: DONE (2026-11-02). One `+` click on the built app took the collector from
+  0 bytes to 4 MB, flipped the row to a tick, enabled Delete and outlined the petal. The
+  "collecting is broken" report belonged to the C17 delete defect, not to this path.
 - **R6 — struck-through items**: DONE (C22).
 - **R12 — Manual path entry**: DONE (2026-11-02). Type a path in the overview and scan it; `~` expands, Cmd-L focuses the field. Drag-and-drop and the folder picker remain, but neither needs a dialog now.
 - **R13 — Duplicate finder**: DONE (C24 engine, C26 panel). Size, then head/tail, then full
@@ -394,6 +408,24 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-02 — C18 closed on one click, and the honest reading is that nothing was broken.
+  A `+` in the contents list of the built app moved the collector from 0 bytes to 4 MB, turned
+  the row's `+` into `✓`, enabled Delete and outlined the petal, all in one interaction
+  (`/tmp/dg-c18.png`, pixels inspected). The 2026-10-30 report of "collecting does nothing" was
+  made while the C17 delete defect was live — the same session that fixed delete also fixed
+  what looked like this. The suspected IPC argument-binding fault never existed; it was
+  refuted by execution and is recorded as refuted, not quietly dropped.
+
+- 2026-11-02 — Duplicates panel shipped (C26): the engine's duplicate finder now has a face.
+  Groups render with the APFS-clone caveat as visible text (the model falls back to its own
+  words if a payload ever arrives without one), the newest copy is marked `keep` and every
+  other copy carries a `+` into the ordinary collector and the unchanged guard. The command is
+  async because a whole-file hash is seconds of I/O; a spent budget reports `partial` rather
+  than "no duplicates". Five IPC tests and nine frontend model tests. One fixture was wrong
+  first: a lone hard-link pair never reaches the nlink check, because size grouping settles it
+  for free, so `excluded_links` reads 0 by design — the fixture was rebuilt to share a size
+  bucket with a real pair rather than the assertion being relaxed.
 
 - 2026-11-02 — Duplicate finder shipped (C24): `crates/core/src/duplicates.rs`, a
   cheap-first pass (size group, 8 KiB head/tail BLAKE3, whole-file BLAKE3) that runs on
