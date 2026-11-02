@@ -72,6 +72,29 @@
         </div>
       </div>
 
+      <div id="duplicates" hidden>
+        <header class="cleanup-head">
+          <h1>Duplicates</h1>
+          <div class="cleanup-controls">
+            <label>at least
+              <select id="duplicates-floor">
+                <option value="1048576" selected>1 MB</option>
+                <option value="10485760">10 MB</option>
+                <option value="104857600">100 MB</option>
+                <option value="1073741824">1 GB</option>
+              </select>
+            </label>
+            <button id="duplicates-run" type="button">Refresh</button>
+            <button id="duplicates-close" type="button">Close</button>
+          </div>
+        </header>
+        <div class="duplicates-body">
+          <p id="duplicates-headline" class="duplicates-headline"></p>
+          <p id="duplicates-note" class="duplicates-note" hidden></p>
+          <div id="duplicates-list" class="cleanup-list"></div>
+        </div>
+      </div>
+
       <div id="overview" hidden>
         <div class="overview-inner">
           <h1>Disks and folders</h1>
@@ -101,6 +124,7 @@
           <span id="collect-caption">in the collector</span>
         </div>
         <button id="cleanup-open" type="button" class="collector-action">Candidates</button>
+        <button id="duplicates-open" type="button" class="collector-action">Duplicates</button>
         <button id="delete-button" type="button" disabled>Delete</button>
       </footer>
     </div>

@@ -9,6 +9,8 @@ import { basename, gaugeFor, toneColor } from './overview'
 import { applyBranch, advance, findChildByName, partialView, startBranches } from './partial'
 import type { PartialBranch } from './partial'
 import { ADMIN_REFUSED_STATUS, adminStatus, isMacPlatform } from './admin'
+import { duplicatesModel } from './duplicates'
+import type { DuplicateGroupModel } from './duplicates'
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id)
@@ -35,6 +37,10 @@ const cleanupPanel = el<HTMLElement>('cleanup')
 const candidatesList = el<HTMLElement>('candidates-list')
 const biggestList = el<HTMLElement>('biggest-list')
 const adminAction = el<HTMLButtonElement>('admin-action')
+const duplicatesPanel = el<HTMLElement>('duplicates')
+const duplicatesHeadline = el<HTMLElement>('duplicates-headline')
+const duplicatesNote = el<HTMLElement>('duplicates-note')
+const duplicatesList = el<HTMLElement>('duplicates-list')
 
 const sunburst = new Sunburst(canvas)
 
@@ -176,6 +182,9 @@ function showError(text: string): void {
 
 async function scanPath(path: string): Promise<void> {
   overview.hidden = true
+  // Both panels describe the scan that was on screen; a new scan makes them stale.
+  cleanupPanel.hidden = true
+  duplicatesPanel.hidden = true
   hideAdminMeasurement()
   setStatus('Scanning…')
   document.body.classList.add('scanning')
@@ -416,7 +425,8 @@ function renderLegend(): void {
   legend.append(list)
 }
 
-async function toggleCollect(nodeId: number, add: boolean): Promise<void> {
+/** Returns whether the collector actually changed, so a caller can draw a tick that is true. */
+async function toggleCollect(nodeId: number, add: boolean): Promise<boolean> {
   try {
     const result = await bridge.collect(state.scanId, nodeId, add)
     state.collectedTotal = result.total
@@ -426,8 +436,10 @@ async function toggleCollect(nodeId: number, add: boolean): Promise<void> {
     sunburst.setCollected(result.ids)
     updateCollector()
     renderLegend()
+    return true
   } catch (error) {
-    setStatus(`Could not update the collector: ${String(error)}`)
+    showError(`Could not update the collector: ${String(error)}`)
+    return false
   }
 }
 
@@ -833,9 +845,20 @@ async function boot(): Promise<void> {
 
   el<HTMLButtonElement>('scan-folder').addEventListener('click', () => void pickFolder())
   el<HTMLButtonElement>('cleanup-open').addEventListener('click', () => {
+    duplicatesPanel.hidden = true
     cleanupPanel.hidden = false
     void refreshCleanup()
   })
+  el<HTMLButtonElement>('duplicates-open').addEventListener('click', () => {
+    cleanupPanel.hidden = true
+    duplicatesPanel.hidden = false
+    void refreshDuplicates()
+  })
+  el<HTMLButtonElement>('duplicates-close').addEventListener('click', () => {
+    duplicatesPanel.hidden = true
+  })
+  el<HTMLButtonElement>('duplicates-run').addEventListener('click', () => void refreshDuplicates())
+  el<HTMLSelectElement>('duplicates-floor').addEventListener('change', () => void refreshDuplicates())
   el<HTMLButtonElement>('cleanup-close').addEventListener('click', () => {
     cleanupPanel.hidden = true
   })
@@ -1002,6 +1025,126 @@ async function refreshCleanup(): Promise<void> {
     )
   } catch (error) {
     showError(`Cleanup report failed: ${String(error)}`)
+  }
+}
+
+// ─── duplicates ──────────────────────────────────────────────────────────────────────
+//
+// The words live in duplicates.ts, where they are tested: every group carries the engine's
+// caveat as visible text, and every figure that could be read as free space says "up to".
+// This half only builds the rows.
+
+function duplicateMemberRow(group: DuplicateGroupModel, index: number): HTMLElement {
+  const member = group.members[index]
+  if (!member) return document.createElement('div')
+
+  const row = document.createElement('div')
+  row.className = member.role === 'keep' ? 'duplicate-member keep' : 'duplicate-member'
+
+  const text = document.createElement('div')
+  const name = document.createElement('div')
+  name.className = 'cleanup-name'
+  name.textContent = member.name
+  name.title = member.dir
+  const dir = document.createElement('div')
+  dir.className = 'cleanup-why'
+  dir.textContent = member.dir
+  text.append(name, dir)
+
+  const size = document.createElement('span')
+  size.className = 'cleanup-size'
+  size.textContent = member.bytes
+
+  row.append(text, size)
+
+  if (member.role === 'keep') {
+    const badge = document.createElement('span')
+    badge.className = 'duplicate-keep'
+    badge.textContent = 'keep'
+    badge.title = 'The newest copy: this panel does not offer it for deletion.'
+    row.append(badge)
+    return row
+  }
+
+  const add = document.createElement('button')
+  add.type = 'button'
+  add.className = 'cleanup-add'
+  add.textContent = state.collectedIds.includes(member.node) ? '✓' : '+'
+  add.title = 'Add this copy to the collector'
+  add.addEventListener('click', () => {
+    void toggleCollect(member.node, true).then((ok) => {
+      // Only claim the copy is collected once the backend said so.
+      if (ok) add.textContent = '✓'
+    })
+  })
+  row.append(add)
+  return row
+}
+
+function duplicateGroupBlock(group: DuplicateGroupModel): HTMLElement {
+  const block = document.createElement('div')
+  block.className = 'duplicate-group'
+
+  const head = document.createElement('div')
+  head.className = 'duplicate-head'
+  const title = document.createElement('strong')
+  title.textContent = group.title
+  const wasted = document.createElement('span')
+  wasted.textContent = group.wasted
+  head.append(title, wasted)
+
+  const members = document.createElement('div')
+  members.className = 'duplicate-members'
+  for (let i = 0; i < group.members.length; i += 1) {
+    members.append(duplicateMemberRow(group, i))
+  }
+
+  // Visible text, never a tooltip: a group read without this line is a space promise the
+  // disk may not keep.
+  const caveat = document.createElement('p')
+  caveat.className = 'duplicate-caveat'
+  caveat.textContent = group.caveat
+
+  block.append(head, members, caveat)
+  return block
+}
+
+async function refreshDuplicates(): Promise<void> {
+  const frame = state.stack[state.stack.length - 1]
+  if (!state.scanId || !frame) {
+    setStatus('Scan something first')
+    return
+  }
+
+  const floor = Number(el<HTMLSelectElement>('duplicates-floor').value)
+  duplicatesList.replaceChildren()
+  duplicatesHeadline.textContent = 'Comparing files…'
+  duplicatesNote.hidden = true
+  setStatus('Comparing files by size, then by content…')
+
+  try {
+    const report = await bridge.duplicates(state.scanId, floor)
+    const model = duplicatesModel(report)
+
+    duplicatesHeadline.textContent = model.headline
+    duplicatesNote.hidden = model.note === null
+    duplicatesNote.textContent = model.note ?? ''
+
+    if (model.groups.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'cleanup-why'
+      empty.textContent = 'Nothing to show. Lower the floor, or scan a folder with more files.'
+      duplicatesList.append(empty)
+    }
+    for (const group of model.groups) {
+      duplicatesList.append(duplicateGroupBlock(group))
+    }
+
+    setStatus(
+      `${report.groups.length} duplicate group${report.groups.length === 1 ? '' : 's'} · ${(report.duration_ms / 1000).toFixed(1)}s`,
+    )
+  } catch (error) {
+    showError(`Duplicate search failed: ${String(error)}`)
   }
 }
 

@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 17/25
+progress: 18/26
 iteration: 1
 created: 2026-10-30
 ---
@@ -285,6 +285,24 @@ because `/private/var/db/ConfigurationProfiles/Store` was invisible, which is th
 the rule that unmeasurable space is reported rather than dropped. Validation is now shape-only
 (absolute, no `..`); readability belongs to the walk.
 
+### C26 — Duplicates are shown with their caveat, never as a space promise  `[x]`
+A panel beside Cleanup runs the duplicate pass over the finished scan and shows every group
+with the engine's own caveat as **visible text**, the newest copy marked `keep`, and a `+` on
+each other copy that goes through the ordinary collector and the unchanged guard. A pass that
+ran out of time says so, rather than reading as "no duplicates".
+**Probe:** `cargo test -p diskguardian-app --test ipc duplicates` — the pair is found and the
+same-size file with different middle bytes is not; the group's caveat equals
+`CONTENT_IDENTICAL_CAVEAT`; a floor above the pair returns an empty report with nothing hashed;
+a zero budget returns `partial: true` with no groups; an unknown scan is a typed error; and a
+name of a shared inode is excluded and counted while the genuine pair beside it is still found.
+`bun test` on `duplicates.ts` proves the panel model cannot render a group without a caveat
+(a blank engine caveat falls back to its own words), that every figure that could be read as
+free space is written "up to", and that exactly one member is the keeper.
+**Falsifier:** a group shown without its caveat, a hard-linked name offered for collection, or a
+spent budget presented as "no duplicates".
+**Honest limit:** the panel offers collection, not deletion; the clone caveat is the reason,
+and clone detection remains R6.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -346,13 +364,20 @@ increment opens.
   path has not reproduced since the delete fix, so this needs one click to confirm or refute.
 - **R6 — struck-through items**: DONE (C22).
 - **R12 — Manual path entry**: DONE (2026-11-02). Type a path in the overview and scan it; `~` expands, Cmd-L focuses the field. Drag-and-drop and the folder picker remain, but neither needs a dialog now.
-- **R13 — Duplicate finder**: in flight on its own worktree. Size, then head/tail, then full BLAKE3; content-identical with the clone caveat.
+- **R13 — Duplicate finder**: DONE (C24 engine, C26 panel). Size, then head/tail, then full
+  BLAKE3; content-identical with the clone caveat shown as visible text.
 - **R3 — Admin scanning**: read restricted petals by scanning as root. Largest real win.
 - **R4 — APFS local snapshots**: list and purge; invisible in Finder, often tens of GB.
 - **R5 — Hidden space**: purgeable, other APFS volumes, still-hidden items as a virtual node.
 - **R6 — APFS clone detection**: accuracy, so clones stop counting twice.
 - **R7 — Reveal in Finder + Quick Look wiring** on the selected petal.
-- **R8 — Starred folders** pinned in the overview.
+- **R8 — Favourite folders** (principal, 2026-11-02). Any folder can be flagged as a
+  favourite from where it is being viewed — the scan screen, the picker, or the overview —
+  and the favourites then appear on the "Disks and folders" front page above the volumes,
+  each with a Scan button. Any favourite can be unstarred from the same place. Favourites
+  persist across launches; a favourite whose folder has since gone is shown as unavailable
+  rather than silently dropped (A3); starring something already starred is a no-op, never a
+  duplicate row.
 - **R9 — Packages** shown solid but expandable.
 - **R10 — Real-time gauges**, Option folds purgeable into the bar.
 - **R11 — Lower**: cloud accounts, parallel multi-disk scanning, disk images, network

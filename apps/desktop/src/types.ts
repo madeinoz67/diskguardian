@@ -47,6 +47,32 @@ export interface CleanupReport {
   total_candidate_bytes: number
 }
 
+export interface DuplicateMember {
+  node: number
+  path: string
+  /** The newest copy in the group: the one the panel does not offer to delete. */
+  keep: boolean
+}
+
+export interface DuplicateGroup {
+  bytes_each: number
+  /** `bytes_each * (members - 1)` — a ceiling, not a promise. See `caveat`. */
+  wasted_bytes: number
+  members: DuplicateMember[]
+  /** The engine's own sentence about APFS clones. Shown as visible text, always. */
+  caveat: string
+}
+
+export interface DuplicateReport {
+  groups: DuplicateGroup[]
+  /** The pass ran out of time or candidates: more duplicates may exist unexamined. */
+  partial: boolean
+  files_hashed: number
+  errors: number
+  excluded_links: number
+  duration_ms: number
+}
+
 export interface TrashStats {
   path: string
   bytes: number
