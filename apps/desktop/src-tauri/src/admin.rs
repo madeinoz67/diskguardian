@@ -630,7 +630,7 @@ fn start_daemon_with_dialog(exe: &Path, dir: &Path) -> io::Result<LaunchOutcome>
     // Quoted: a temp path may contain spaces, and an unquoted operand would arrive as
     // two argv entries — which the classifier refuses (BadUsage, exit 2).
     let parameters = format!("--dg-admin-serve \"{}\"", dir.display());
-    let outcome = win_elevate::elevate_serve(exe, &parameters)?;
+    let outcome = diskguardian_win_elevate::elevate_serve(exe, &parameters)?;
     if !outcome.success {
         // A decline lands here: `refusal_message` already words any stderr containing
         // "cancel" as the refusal the macOS user sees, unchanged.
