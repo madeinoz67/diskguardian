@@ -80,6 +80,10 @@ jobs:
         working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The claim check compares against the base commit, so the base object has to be
+          # present; a shallow clone cannot show it.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -96,3 +100,17 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      # A prose record cannot be kept honest by intention. This is the only mechanical rule
+      # the ISA admits: what this change closes must name how it was checked. It runs on the
+      # claims the branch newly ticks, so the historical ticks are a backlog rather than a
+      # blocker — `bun run scripts/check-isa-claims.ts ISA.md --all` audits those.
+      - name: Claim record
+        # Absolute, not `..`: this job's default working directory is apps/desktop, so `..`
+        # is apps/ — the gate failed its first real run on exactly that.
+        working-directory: ${{ github.workspace }}
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          bun test scripts/
+          bun run scripts/check-isa-claims.ts ISA.md --base "$BASE"

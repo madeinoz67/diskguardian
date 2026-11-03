@@ -71,9 +71,12 @@ privileged path, or a claim in `ISA.md`, run the loop.
    pre-committed rule. Correctness of the instrument comes first: prove the measurement can
    see what it claims to see (a deliberately wrong fixture, an RSS sanity probe) before
    quoting it.
-7. **Merge.** Only on the full green battery, and only after every real finding is folded or
-   deferred by name. The branch merges to `main` (`--no-ff`, message naming what shipped and
-   what was deferred), then push. CI runs on the push; watch it before calling the work done.
+7. **Merge.** Open a PR, and merge it **only** through `scripts/merge-verified.sh`: it watches
+   the checks to terminal state, prints the COMPLETE rollup, and refuses on any fail, pending or
+   empty result before merging. The local battery is a pre-filter, not the gate — it can only
+   prove things about this machine, and on 2026-11-03 a Windows compile break and an ext4-only
+   assertion both reached `main` behind a locally-green report. Every real finding folded or
+   deferred by name before the PR opens.
 8. **Run close.** Remove the worktree, delete the merged local branch, and record in the ISA
    what changed, what was verified and how, and what stayed open. A claim closed on a
    screenshot says which screenshot. That entry is the raw material for the **`retrospective`**

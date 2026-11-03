@@ -44,10 +44,13 @@ cd apps/desktop && bun run tauri:build   # the bundle
   whether the guard or the fixture is wrong, and say which in the commit message.
 - **Never make the UI right by changing the engine's arithmetic.** The engine is the truth;
   the view is a projection.
-- **Merge to `main` while the project is pre-rules** (principal, 2026-11-02: "we are still in
-  early development so merge to main is ok until i enable rules in the repo"). Feature work may
-  still go on a branch for isolation, but a green branch merging straight back is the default.
-  When branch protection or a PR gate is turned on, this line changes first, not after.
+- **Work on a branch; `main` is merged into, never committed to** (changed 2026-11-03, after the
+  first release; supersedes "merge to main while the project is pre-rules"). Open a PR, and merge
+  it **only** through `scripts/merge-verified.sh`, which watches the checks to terminal state,
+  prints the COMPLETE rollup and refuses on any fail, pending or empty result. `gh pr checks |
+  tail` is not the rollup — it hides failing lanes and masks the exit code. The old rule is what
+  let a Windows compile break and an ext4-only assertion reach `main`: the local battery proves
+  things about this machine, and nothing read CI before the merge.
 - **Test files allow `dead_code` and `unused_imports`; production code does not.** Platform-gated
   tests orphan their helpers on the platforms that skip them, and that failure cannot be
   reproduced on a single machine — it has cost three CI rounds. The allowance is scoped to
@@ -57,6 +60,10 @@ cd apps/desktop && bun run tauri:build   # the bundle
   `use` or its fixture helper ungated is clean on the developer's machine and a `-D warnings`
   failure on the platforms that skip the test. CI runs the engine on macOS, Ubuntu and Windows
   precisely so this is caught; clippy on one platform is not a gate.
+- **A closed claim names how it was checked.** `scripts/check-isa-claims.ts` runs in CI: a claim
+  this change newly ticks must carry a `**Probe:**`, `**Verified**`, `**Closed**`, `**Measured**`
+  or `**Evidence:**` line, or the lane fails. It checks that evidence is *named*, never that it is
+  true — the review lanes own that. `--all` audits the historical ticks.
 - **No "should work".** Engine claims close on `cargo test` output; appearance claims close
   on a screenshot whose pixels someone looked at.
 - **Parallel work happens in a worktree, never in the primary checkout.** Every dispatched
