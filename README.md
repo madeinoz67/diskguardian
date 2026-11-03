@@ -39,8 +39,10 @@ deletion: you look, you decide, you delete.
 
 ## Install
 
-Releases carry per-platform artifacts, each named with its target triple so a download
-cannot be mistaken for another architecture's:
+Releases carry per-platform artifacts. The single-file downloads are named with their
+full target triples, so a download cannot be mistaken for another architecture's; the
+two macOS dmgs keep the bundler's per-architecture names (`aarch64` / `x64`), which
+cannot collide with any other asset:
 
 | Platform | Artifacts |
 |---|---|
