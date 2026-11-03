@@ -24,17 +24,20 @@ const host = (await $`rustc -vV`.text()).match(/host: (\S+)/)?.[1]
 if (!host) throw new Error('rustc -vV did not report a host triple; is a Rust toolchain installed?')
 
 const triple = target || host
+// Windows cargo emits diskguardian-admin.exe; the bundler still wants the
+// target-triple-suffixed name without the extension.
+const exe = triple.includes('windows') ? '.exe' : ''
 
 // From apps/desktop, where bun run executes this script.
 if (triple === host) {
   await $`cargo build -p diskguardian-admin --release --locked`
   await $`mkdir -p src-tauri/binaries`
-  await $`cp ../../target/release/diskguardian-admin src-tauri/binaries/diskguardian-admin-${triple}`
+  await $`cp ../../target/release/diskguardian-admin${exe} src-tauri/binaries/diskguardian-admin-${triple}`
 } else {
   // A cross build lands under target/<triple>/release, not target/release.
   await $`cargo build -p diskguardian-admin --release --locked --target ${triple}`
   await $`mkdir -p src-tauri/binaries`
-  await $`cp ../../target/${triple}/release/diskguardian-admin src-tauri/binaries/diskguardian-admin-${triple}`
+  await $`cp ../../target/${triple}/release/diskguardian-admin${exe} src-tauri/binaries/diskguardian-admin-${triple}`
 }
 
 console.log(`staged diskguardian-admin for ${triple}`)
