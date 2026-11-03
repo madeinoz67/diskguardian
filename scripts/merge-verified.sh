@@ -74,7 +74,21 @@ rollup="$(gh pr checks "$pr" -R "$repo" 2>&1)" || true
 printf '\n--- full rollup: gh pr checks %s -R %s ---\n%s\n--- end rollup ---\n\n' \
   "$pr" "$repo" "$rollup"
 
-total="$(printf '%s\n' "$rollup" | awk -F'\t' 'NF >= 2 && $2 ~ /^(pass|fail|pending|skipping)$/ {n++} END {print n + 0}')"
+# A push starts a window in which no checks exist yet: `gh pr checks --watch` can exit
+# immediately with "no checks reported on the <branch> branch", and reading the rollup
+# right then refuses on emptiness that is only temporary. Wait for the first check to
+# appear before treating zero as a verdict — bounded, so a CI that never starts still
+# fails rather than hanging.
+waited=0
+while :; do
+  rollup="$(gh pr checks "$pr" -R "$repo" 2>&1)" || true
+  total="$(printf '%s\n' "$rollup" | awk -F'\t' 'NF >= 2 && $2 ~ /^(pass|fail|pending|skipping)$/ {n++} END {print n + 0}')"
+  [ "$total" -gt 0 ] && break
+  [ "$waited" -ge 600 ] && break
+  say "no checks yet (waited ${waited}s) — CI may still be starting for this head"
+  sleep 20
+  waited=$((waited + 20))
+done
 fails="$(printf '%s\n' "$rollup" | awk -F'\t' '$2 == "fail" {n++} END {print n + 0}')"
 pend="$(printf '%s\n' "$rollup" | awk -F'\t' '$2 == "pending" {n++} END {print n + 0}')"
 
