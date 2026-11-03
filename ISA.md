@@ -191,15 +191,23 @@ root concurrently; the honest behaviour is "open on arrival", with no second wal
 > and `guard` canonicalises paths (`/var/...` becomes `/private/var/...` on macOS), so the
 > lookup missed, nothing was pruned, and "freed" reported a directory's metadata size. The
 > principal saw it as "delete does nothing". Now aligned by position, and pinned by
-> `delete_removes_the_node_and_returns_a_smaller_view` in `src-tauri/tests/ipc.rs`, which
-> drives the real command on a mock runtime.
+> `delete_strikes_the_node_through_and_shrinks_the_totals` in
+> `apps/desktop/src-tauri/tests/ipc.rs`, which drives the real command on a mock runtime.
+> *(Corrected 2026-11-03: this note named `delete_removes_the_node_and_returns_a_smaller_view`,
+> a test that has never existed in the file. The evidence line pointed at nothing, which is the
+> class of defect the claim checker cannot catch — it verifies that evidence is named, never that
+> the name resolves.)*
 After a delete the backend prunes the deleted nodes from the tree, recomputes every
 ancestor's totals and returns a fresh view, so the petal disappears and the totals shrink
 immediately. The default action moves items to the macOS Trash; holding Option on the Delete
 button removes them permanently, which always asks first.
-**Probe:** `cargo test` on `Tree::forget` (deleted node leaves its parent, every ancestor
+**Probe:** `cargo test` — `Tree::forget` (deleted node leaves its parent, every ancestor
 loses exactly the deleted bytes, tree arithmetic still holds, the scan root cannot be
-forgotten) plus the existing Trash-recovery test.
+forgotten), the Trash-recovery test, and the end-to-end
+`delete_strikes_the_node_through_and_shrinks_the_totals` in
+`apps/desktop/src-tauri/tests/ipc.rs`. That last one takes its expected drop from the
+pre-delete scan rather than a hardcoded figure, so it holds on any filesystem — the first
+two alone are exactly what closed this claim wrongly before the 2026-11-02 correction.
 **Falsifier:** a delete that triggers a full rescan, or a parent whose total does not shrink.
 
 ### C18 — Collecting from the list actually works  `[x]`
