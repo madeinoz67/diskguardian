@@ -19,6 +19,8 @@
 //!    here. The webview supplies a boolean and nothing else.
 
 use serde::Serialize;
+// Only the macOS branch shells out; on other platforms the type is never named.
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 /// The one volume this module speaks for. Fixed here rather than accepted from the
