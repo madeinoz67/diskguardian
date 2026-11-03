@@ -237,8 +237,21 @@ jobs:
                     readelf -d "$cand" | grep -Ei 'rpath|runpath|interpreter' || echo "  (no rpath/runpath/interpreter entries)"
                   fi
                   if command -v cmp >/dev/null; then
-                    echo "  first byte difference vs reference:"
-                    cmp -l "$REF_DIR/$bin" "$cand" 2>/dev/null | head -5 || echo "  (cmp found no accessible difference or failed)"
+                    DIFFS="$(cmp -l "$REF_DIR/$bin" "$cand" 2>/dev/null || true)"
+                    COUNT="$(printf '%s' "$DIFFS" | grep -c . || true)"
+                    echo "  total differing bytes vs reference: ${COUNT:-0}"
+                    printf '%s\n' "$DIFFS" | head -5
+                    FIRST="$(printf '%s\n' "$DIFFS" | head -1 | awk '{print $1}')"
+                    if [ -n "$FIRST" ] && command -v od >/dev/null; then
+                      # Name the exact string the bundler touched: 128 bytes of
+                      # context centred on the first differing byte, from both files,
+                      # as hex+ASCII.
+                      START=$(( FIRST > 64 ? FIRST - 64 : 1 ))
+                      echo "  byte context (reference $bin), 128 bytes from offset $START:"
+                      dd if="$REF_DIR/$bin" bs=1 skip=$((START - 1)) count=128 2>/dev/null | od -Ad -tx1z
+                      echo "  byte context (payload $bin), 128 bytes from offset $START:"
+                      dd if="$cand" bs=1 skip=$((START - 1)) count=128 2>/dev/null | od -Ad -tx1z
+                    fi
                   fi
                 else
                   echo "  no payload file even named like $bin"
