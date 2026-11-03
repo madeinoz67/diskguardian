@@ -704,3 +704,71 @@ workflow run or hand test.
 4. **Next tag** confirmed as **0.1.1** (asset names and the release body embed it).
 5. **Roadmap placement of C30** — a claim, not a DaisyDisk-parity row; number it only if
    you want it on the roadmap, outside parity ordering.
+
+---
+
+# Amendment 2 — binary patching is Tauri's, not a defect; the flag, not the exception
+
+Date: 2026-11-03, after Stage A attempts 1–3 (runs 41632923688, 41635246338, 41637620161).
+Maintainer ruling; builder diagnosis accepted as stated.
+
+## What the runs proved
+
+- The deb's `diskguardian-admin` hash-matches cargo output; the deb's
+  `diskguardian-app` is the same size and BuildID with exactly three differing bytes,
+  inside `__TAURI_BUNDLE_TYPE_VAR_UNK` → `__TAURI_BUNDLE_TYPE_VAR_DEB`. The mechanism is
+  tauri's own (`tauri-utils-2.10.2/src/platform.rs:357`: "modified by binary patching
+  during build"; macOS returns `App` from `cfg!` unpatched, which is why the macOS legs'
+  byte-identity checks pass as designed). The original patchelf hypothesis is refuted
+  for the deb: neither reference nor payload carries any rpath entry.
+- The NSIS payload's app binary differs the same way (`_NSS`).
+- The AppImage rewrites BOTH binaries (RUNPATH `$ORIGIN/../lib` injected, sizes grown):
+  byte-identity is unattainable there by construction, for the sidecar too.
+
+## The ruling
+
+1. **`--no-binary-patching` on the shared build step** (deb, NSIS; a documented no-op
+   for macOS-native bundles). A bounded 3-byte exception would make C30's sentence
+   false by construction and license deviation from it; the flag makes the sentence
+   TRUE. The flag's only documented cost is per-bundle-type updater support, and this
+   app ships no updater (no updater plugin, no `createUpdaterArtifacts`, no source
+   reads a bundle-type token). Attempt 4 must prove it: with the flag on, the deb and
+   NSIS main binaries hash-match cargo output exactly, alongside the sidecar that
+   already does. If the flag does not eliminate the difference, the bounded exception
+   returns as the fallback — not before.
+2. **The deb arm is unchanged**: plain SHA-256 equality, now expected to pass.
+3. **The AppImage arm is a section-wise ELF-content check, for BOTH binaries** (the
+   sidecar is rewritten there too). Per binary: ELF machine equal (and asserted to be
+   the leg's architecture, since hash equality no longer carries it there); GNU
+   build-id equal; program interpreter equal; `DT_NEEDED` list equal; RUNPATH exactly
+   `$ORIGIN/../lib`; section-NAME set equal; and every section's content hash equal
+   **except the bundler-owned `.dynstr` and `.dynamic`**. NOBITS sections (`.bss`,
+   `.tbss`) have no file bytes and are skipped as a mechanical fact, not a policy
+   exception. Every compared section hash is printed to the job log. No size bound
+   anywhere — a growth bound is a looser check wearing a stricter coat and cannot fail
+   R-mutate.
+   - Why build-id alone is not enough: a build-id survives all post-link mutation
+     (attempt 3's deb and AppImage binaries share `06c35623` while differing from the
+     reference and from each other), so it is necessary, not sufficient. Why not
+     `.text`-only: the bundle-type token lives in `.rodata`. The full-section compare
+     minus the two named sections is the strongest check that can still pass.
+4. **R-mutate tightens for the AppImage arm** to two named mutations: one byte flipped
+   inside the reference's `.text`, one inside its `.rodata`. Both must fail the step.
+   **Stated residual blind spot:** bytes outside any section (gaps between sections in
+   the file image) are undetectable by any content check we run.
+5. **Asset-level SHA-256s for the deb and the AppImage are printed in the Linux leg's
+   log**: Stage B runs on macOS and cannot `dpkg-deb -x` or run linuxdeploy tooling —
+   the printed asset hashes are what its download re-hash compares against.
+6. **Iteration accounting** (maintainer): attempts 1 and 2 spent before the ruling, the
+   post-diagnosis dispatch counts as the third; the flag-proving run is the fourth; cap
+   stays five.
+7. Attempt-2's instrumentation (per-file hashes, rpath dumps, byte-context `cmp`)
+   **stays in the file** — it settled this amendment and it is the evidence Stage B
+   reads.
+
+Governance findings folded in the same window (runs crossed mid-flight): C30's evidence
+lines now lead with the exact `**Probe:**` prefix the claim checker accepts, and the
+triple-naming claim names the single-file artifacts as the triple-named set with the
+two dmg names as non-colliding bundler names — in ISA and the README. The 1,000,000-byte
+per-asset floor (§7 B2) moves from prose to an executable assertion in the release
+lane's collect step, at the pre-committed value.
