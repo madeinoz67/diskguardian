@@ -351,6 +351,15 @@ jobs:
             for sec in $s_ref; do
               case "$sec" in
                 .dynstr|.dynamic) echo "section $sec: skipped (bundler-owned, design Amendment 2)"; continue ;;
+                # patchelf/linuxdeploy rewrites the section-header string table on the
+                # AppImage: reference ceb97862… and payload 6b8f3b8d…, byte-identical
+                # across BOTH binaries in run 41645973726, and the reference value
+                # reproduced from a fresh local dump. The table's semantics are still
+                # verified, because the section-NAME SET is asserted equal separately
+                # above: a renamed, added or dropped section changes that set and fails
+                # before this line is reached. What differs is the bundler's byte
+                # arrangement of the names, not which sections exist or what is in them.
+                .shstrtab) echo "section $sec: skipped (bundler-owned string table; the name-set assertion carries the semantics)"; continue ;;
               esac
               typ="$(readelf -SW "$ref" | sed -E 's/^ *\[ *[0-9]+\] +//' | awk -v s="$sec" '$1 == s {print $2; exit}')"
               if [ "$typ" = "NOBITS" ]; then echo "section $sec: skipped (NOBITS — no file bytes to hash)"; continue; fi

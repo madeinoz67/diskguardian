@@ -548,9 +548,12 @@ rewrite never runs; macOS needs no flag, the bundler already skips macOS-native
 bundles) and, on the Linux `.AppImage` only, equal at ELF-content level: same machine,
 GNU build-id, interpreter and `DT_NEEDED` list, RUNPATH exactly `$ORIGIN/../lib`, and
 every section's content hash equal to the cargo build product except the
-bundler-owned `.dynstr`/`.dynamic` (linuxdeploy's RUNPATH injection and library
-deployment are intrinsic to the format — and a build-id survives all post-link
-mutation, so no single-file hash there would carry meaning); and the release body
+bundler-owned `.dynstr`, `.dynamic` and `.shstrtab` (linuxdeploy's RUNPATH
+injection, its library deployment and its rewrite of the section-name table are
+intrinsic to the format — a build-id survives all post-link mutation, so no
+single-file hash there would carry meaning; the section-NAME set is still
+asserted equal and that is what carries the semantics, since a renamed, added or
+dropped section always fails it); and the release body
 naming what each platform's OS will warn about (Gatekeeper, SmartScreen, unsigned deb /
 AppImage FUSE).
 
