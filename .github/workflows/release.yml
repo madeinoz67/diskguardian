@@ -1,16 +1,35 @@
 name: Release
 
+# Two lanes on purpose:
+#
+#   build   — runs on every dispatch and every tag, publishes nothing. It produces the
+#             per-architecture bundles and asserts they contain what they must, so the
+#             pipeline can be proven without a public release existing.
+#   release — tags only. Takes the artifacts the build lane produced and attaches them to
+#             a draft release. Nothing here rebuilds, so what ships is what was verified.
+#
+# Both macOS architectures are built. The app is unsigned (there is no signing identity),
+# so a downloaded bundle is quarantined by Gatekeeper; that is stated in the release body
+# rather than left for the user to discover.
+
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  bundle:
-    name: macOS app bundle
+  build:
+    name: Bundle (${{ matrix.target }})
     runs-on: macos-latest
-    permissions:
-      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
 
@@ -19,18 +38,110 @@ jobs:
           bun-version: latest
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: |
+            .
+            apps/desktop/src-tauri
 
-      - name: Build and attach
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: bun install --frozen-lockfile
+
+      # Tauri's externalBin needs the helper under the target triple, and
+      # `beforeBuildCommand` only builds the frontend — so the helper is staged here,
+      # explicitly, for the architecture being bundled.
+      - name: Stage the measurement helper
+        working-directory: apps/desktop
+        run: bun run stage:admin --target ${{ matrix.target }}
+
+      - name: Build the bundle
+        working-directory: apps/desktop
+        run: bunx tauri build --target ${{ matrix.target }} --bundles app,dmg
+
+      # The release is worthless if it ships without the privileged helper or built for
+      # the wrong architecture, and neither failure would be visible after upload.
+      - name: Verify the bundle contains what it must
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          APP="$(ls -d src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app | head -1)"
+          echo "bundle: $APP"
+          test -x "$APP/Contents/MacOS/diskguardian-app" || { echo "app binary missing"; exit 1; }
+          test -x "$APP/Contents/MacOS/diskguardian-admin" || { echo "admin helper missing from Contents/MacOS"; exit 1; }
+          ARCH_APP="$(lipo -archs "$APP/Contents/MacOS/diskguardian-app")"
+          ARCH_HELPER="$(lipo -archs "$APP/Contents/MacOS/diskguardian-admin")"
+          echo "app archs: $ARCH_APP"
+          echo "helper archs: $ARCH_HELPER"
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) EXPECT=arm64 ;;
+            x86_64-apple-darwin) EXPECT=x86_64 ;;
+          esac
+          echo "$ARCH_APP" | grep -qw "$EXPECT" || { echo "app is not $EXPECT"; exit 1; }
+          echo "$ARCH_HELPER" | grep -qw "$EXPECT" || { echo "helper is not $EXPECT"; exit 1; }
+          DMG="$(ls src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)"
+          test -s "$DMG" || { echo "no dmg produced"; exit 1; }
+          echo "dmg: $DMG"
+
+      - uses: actions/upload-artifact@v4
         with:
-          projectPath: apps/desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: DiskGuardian ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: false
+          name: diskguardian-${{ matrix.target }}
+          path: |
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+          if-no-files-found: error
+
+  release:
+    name: Attach to the draft release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect the bundles
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find artifacts -name '*.dmg' -exec cp {} out/ \;
+          # Two architectures can produce the same dmg name; keep them apart.
+          for dir in artifacts/*; do
+            target="$(basename "$dir")"
+            for app in "$dir"/**/*.app "$dir"/*/*.app; do
+              [ -d "$app" ] || continue
+              name="$(basename "$app" .app)"
+              ditto -c -k --sequesterRsrc --keepParent "$app" "out/${name}-${target#diskguardian-}.zip"
+            done
+          done
+          ls -la out
+
+      - name: Create or update the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="$(cat <<'EOF'
+          Unsigned build: there is no signing identity for this project, so macOS will
+          quarantine the download. After moving DiskGuardian to Applications, either
+          right-click it and choose Open, or run:
+
+              xattr -dr com.apple.quarantine /Applications/DiskGuardian.app
+
+          The administrator measurement helper (`diskguardian-admin`) ships inside the app
+          bundle and is only ever started by the app, behind the system's own consent
+          dialog. It measures; it never deletes.
+          EOF
+          )"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+          else
+            gh release create "$TAG" out/* --draft --title "DiskGuardian $TAG" --notes "$NOTES"
+          fi
