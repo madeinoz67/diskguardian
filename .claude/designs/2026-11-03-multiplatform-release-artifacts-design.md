@@ -1,18 +1,32 @@
 # Multi-platform release artifacts — design
 
-Date: 2026-11-03 · Author: increment-designer · Status: proposed (not implemented)
+Date: 2026-11-03 · Author: increment-designer · Status: proposed, **amended once** (maintainer rulings, same day; no code was built against the original text — the builder was stopped before merging)
+
+**Amendment 1 — what changed vs what stood.** The maintainer ruled:
+
+1. **Windows ships the app binary ONLY.** No `diskguardian-admin.exe` in the NSIS
+   installer. The original design's "the helper ships in every artifact" premise is dead
+   for Windows; the `resolve_helper()` `.exe` defect found by the original design is
+   therefore unreachable in shipped builds (no sidecar to resolve) and its 3-line fix is
+   withdrawn — superseded, not landed.
+2. **Windows elevation is IN this slice, as self-elevation.** The app re-execs itself
+   elevated via the `runas` verb; the elevated instance serves the existing job/results
+   protocol. No sidecar, no `externalBin` on Windows.
+
+Standing unchanged: version 0.1.1, NSIS only (no msi), macOS lanes byte-for-byte as they
+are today, Linux ships the helper with elevation still deferred, no frontend gating of
+the Measure button, C30 is a claim only, and the whole verification/release-lane
+apparatus of the original design (hash-based verify, triple-named assets, exact-count
+assertion) stands — with verification now **per-platform expected sets** (§3.3).
 
 **High-risk areas, named in the first paragraph as required.** This increment touches
 **none of the three engine high-risk areas** — physical-size accounting, restricted-space
-reporting and guarded deletion are unchanged in behavior on every platform. But it does
-touch the **distributed form of the restricted-space story**: the `diskguardian-admin`
-helper ships inside every new artifact, and the elevated-measurement *launcher* stays
-macOS-only (`apps/desktop/src-tauri/src/admin.rs`, `#[cfg(not(target_os = "macos"))] fn
-start_daemon_with_dialog`). The design's honesty obligation is therefore about
-**packaging and labelling**, not arithmetic: no artifact may silently lack the helper, no
-release body may imply a platform can do what it cannot, and the degraded Windows/Linux
-state (button reports "administrator measurement is macOS-only for now") must be stated,
-not discovered.
+reporting and guarded deletion are unchanged in behavior on every platform. It touches
+the **distributed form of the restricted-space story** twice over: the admin helper ships
+in macOS/Linux artifacts only, and on Windows the *privileged process becomes the app
+binary itself* — a deliberately accepted widening of the privileged image (§3.7) that the
+claim text states rather than hides. Deletion stays unprivileged everywhere; the
+privileged path on every platform measures and never deletes (A1, A5 hold).
 
 ---
 
@@ -24,90 +38,95 @@ Everything below was read this session, not assumed.
   exactly `aarch64-apple-darwin` and `x86_64-apple-darwin`; build step
   `bunx tauri build --target <triple> --bundles app,dmg`; verify step shells `lipo` and
   `test -x` against `Contents/MacOS/{diskguardian-app,diskguardian-admin}`; upload takes
-  `bundle/dmg/*.dmg` and `bundle/macos/*.app`. There is no Windows or Linux leg. That is
-  the whole defect: the pipeline can only ever attach macOS assets.
+  `bundle/dmg/*.dmg` and `bundle/macos/*.app`. No Windows or Linux leg. That is the whole
+  defect: the pipeline can only ever attach macOS assets.
 - Published v0.1.0 (`gh release view`, this session): four assets, all macOS —
   `DiskGuardian-aarch64-apple-darwin.zip` (2,955,743 B), `DiskGuardian-x86_64-apple-darwin.zip`
   (3,149,897 B), `DiskGuardian_0.1.0_aarch64.dmg` (3,009,779 B), `DiskGuardian_0.1.0_x64.dmg`
-  (3,200,566 B). The reported symptom matches the workflow exactly.
-- `apps/desktop/src-tauri/tauri.conf.json` (line 33): `"targets": ["app", "dmg"]` — both are
-  invalid bundle targets on Windows (`nsis`/`msi`) and `dmg` is invalid on Linux, so a local
-  `bun run tauri:build` on those platforms would fail even though the workflow will override
-  with `--bundles`. The config has to move too, or the README's build-from-source story is a
-  lie outside macOS.
+  (3,200,566 B).
+- `apps/desktop/src-tauri/tauri.conf.json` (line 33): `"targets": ["app", "dmg"]` — invalid
+  bundle targets on Windows (`nsis`/`msi`) and `dmg` invalid on Linux, so a local
+  `bun run tauri:build` outside macOS fails today. The config must move per-platform.
 - `.github/workflows/ci.yml`: the `engine` job already runs `cargo test -p diskguardian-core`
-  on `macos-latest`, `ubuntu-latest`, `windows-latest`, installs the Linux webview deps
-  (`libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`), and
-  `cargo check -p diskguardian-app` with `-D warnings` on all three. **Unconditional
-  compilation of the app crate on Windows and Linux is proven in CI**; only bundling is new.
-- `apps/desktop/scripts/stage-admin.ts`: already triple-portable. It parses `--target`,
-  resolves the host via `rustc -vV`, and — decisive for Windows — appends `.exe` after the
-  triple ("Windows cargo emits diskguardian-admin.exe, and tauri's externalBin looks for the
-  target-suffixed name WITH the extension intact"). It stages
-  `src-tauri/binaries/diskguardian-admin-<triple>[.exe]`. **No change needed** for
-  `x86_64-pc-windows-msvc` or `x86_64-unknown-linux-gnu` staging. Its known trap — copying
-  from a hard-coded `../../target` — does not fire on CI runners (no `CARGO_TARGET_DIR`,
-  fresh checkout), and is already logged in the ISA (2026-11-02). Out of scope here.
-- `crates/admin/src/main.rs`: portable Rust. The only platform gate is `#[cfg(unix)]` around
-  `world_readable` (a chmod), with a `#[cfg(not(unix))]` no-op. The helper knows nothing
-  about `osascript`; elevation lives in the app's launcher. It links `diskguardian-core` and
-  `serde`/`serde_json` only, so it cross-builds anywhere the engine does.
-- `apps/desktop/src-tauri/src/admin.rs`: the non-macOS launcher stub already returns
-  `io::ErrorKind::Unsupported` — "administrator measurement is macOS-only for now". The
-  job-file/results-file protocol and the `AdminScanReport` IPC shape are platform-neutral.
-  **Design finding (defect, folded into this slice):** `fn resolve_helper()` does
-  `current_exe().parent().join(HELPER_NAME)` where `HELPER_NAME = "diskguardian-admin"`.
-  Tauri's bundler renames the sidecar to `diskguardian-admin.exe` in a Windows install, and
-  `Path::exists()` on the extension-less name is false there — so on Windows the user would
-  see *"could not find the diskguardian-admin helper"* when the truth is "it shipped; the
-  launcher is macOS-only". Wrong-honesty class, three-line fix (§3.7), and it is the reason
-  the verify step must confirm the helper by **hash**, not by name.
+  on `macos-latest`, `ubuntu-latest`, `windows-latest`, installs the Linux webview deps,
+  and `cargo check -p diskguardian-app` with `-D warnings` on all three. **Unconditional
+  compilation on Windows and Linux is proven in CI**; only bundling is new. (CI runs no
+  app-crate *tests* today — §3.7.5 adds them where the mock runtime makes them headless.)
+- `apps/desktop/scripts/stage-admin.ts`: already triple-portable, including the Windows
+  `.exe`-after-triple rule for `externalBin`. Under Amendment 1 it is **skipped on the
+  Windows lane** (`if: runner.os != 'Windows'`) and unchanged for macOS/Linux. Its known
+  `../../target` hard-coding does not fire on CI runners (already in the ISA log).
+- `crates/admin/src/main.rs`: portable; the only platform gate is `#[cfg(unix)]` around
+  `world_readable` (a chmod) with a `#[cfg(not(unix))]` no-op. On Windows the elevated
+  writer's files are read by the unelevated parent through the staging directory's own
+  inherited ACLs (§8, risk 3).
+- `apps/desktop/src-tauri/src/admin.rs`: the seam is exactly right and was built for this
+  day — `pub type Launch = Arc<dyn Fn(&Path) -> io::Result<LaunchOutcome> + Send + Sync>`
+  (~line 87), taking the session staging directory; `start_daemon_with_dialog` (osascript)
+  fills it on macOS; the IPC tests inject a stand-in that "plays the daemon against the
+  same files". `AdminSession` (staging dir, heartbeat thread, `job_seq`, `daemon_started`)
+  is host-agnostic and is **not modified** by this design — only the launcher closure and
+  a cfg-gate move. `refusal_message` already classifies any stderr containing "cancel"
+  into "Administrator access was declined — restricted areas stay unmeasured", which the
+  Windows decline path reuses verbatim (§3.7.2).
+- `apps/desktop/src-tauri/src/main.rs` is four lines — `#![cfg_attr(not(debug_assertions),
+  windows_subsystem = "windows")]` then `diskguardian_app::run()` — so the pre-Tauri
+  serve branch (§3.7.3) slots in before any Tauri initialisation, and release builds have
+  no console to flash.
+- `crates/admin/Cargo.toml`: bin-only, `[lints.rust] unsafe_code = "forbid"`. The app
+  crate carries no such lint today, but core and admin both forbid — the one unavoidable
+  Win32 call therefore gets its own windows-gated mini-crate (§3.7.2) rather than being
+  the app crate's first `unsafe`, and admin's forbid is untouched.
 
-**Root cause of the symptom, stated once:** the release pipeline's build matrix enumerates
-two Apple triples on one macOS runner and its verify/upload/collect steps hard-code macOS
-bundle shapes. Multi-platform shipping needs the matrix to select the runner per target,
-the bundle set per platform, and the verification to be stated in a platform-neutral way
-("the packaged payload contains, byte-identical, both binaries cargo built for this
-triple") instead of the macOS-specific way it is stated today (`lipo`, `.app` paths).
+**Root cause, stated once:** the release pipeline's build matrix enumerates two Apple
+triples on one macOS runner and its verify/upload/collect steps hard-code macOS bundle
+shapes. Multi-platform shipping needs the matrix to select runner and bundle set per
+target, verification stated per-platform ("the payload contains, byte-identical, exactly
+the binaries this platform ships"), and — new in Amendment 1 — a Windows elevation
+mechanism that fills the existing launcher seam without shipping a second binary.
 
-## 2. What "honest status on Windows/Linux" means, and what drives it
+## 2. What "honest status" means per platform, after the rulings
 
-The helper's *measurement* engine is portable; only its *elevation* is macOS-specific
-(`do shell script … with administrator privileges`). Therefore:
+- **macOS — unchanged.** Sidecar helper via `externalBin`, osascript prompt-per-session,
+  everything as shipped in C23.
+- **Windows — app binary only, self-elevation in this slice.** The NSIS payload contains
+  `DiskGuardian.exe` and nothing else. When the user consents via UAC, the elevated
+  process is that same `DiskGuardian.exe` re-executed with a serve flag; it runs the
+  identical job/results protocol (from the same code, §3.7.1) and exits with the session.
+  The trade the maintainer accepted, stated plainly: **on macOS the privileged process is
+  a capability-minimal binary whose entire code is measure-and-write; on Windows it is
+  the whole app binary, whose serving path is selected by an argv branch taken before any
+  window, webview or command surface can exist.** The unreachable code is still in the
+  image. That is a wider privileged image than macOS's, and the claim (§6) says so.
+- **Linux — helper ships, elevation deferred.** The `.deb` and `.AppImage` carry
+  `diskguardian-admin` beside the app, exactly like macOS, and the Measure button reports
+  "not available on Linux yet" in words (the existing `#[cfg(not(target_os = "macos"))]`
+  stub narrows to Linux — §3.7.5). Why not self-elevation here: **`pkexec` is not
+  self-elevation.** It is a polkit-daemon-mediated prompt that needs a `.policy` file
+  defining the action, its allowed callers and its retain-timeout — a new mechanism with
+  its own security review, not a re-exec behind the same seam. Linux keeps the helper in
+  the bundle so that day is a launcher swap plus one policy file, with the bundle shape
+  already stable.
+- **Everywhere:** the core loop never needs elevation (A5); restricted petals stay purple
+  and counted when elevation is declined or unavailable (A3); deletion never runs
+  elevated on any platform (the serving path initialises no command surface at all).
 
-- **Ship the helper in every artifact.** It is small, portable, has no delete call sites,
-  and the wire protocol is identical — a future `pkexec` (Linux) or UAC (Windows) launcher
-  slots into the existing `Launch` seam (`admin.rs`, `pub type Launch`) without a protocol
-  change. Dropping it from Windows/Linux bundles would fork the bundle shape and make that
-  day harder.
-- **Do not ship an elevated-measurement story on Windows/Linux in this slice.** No `pkexec`,
-  no `runas`. A scan on those platforms behaves exactly like a refused dialog on macOS:
-  restricted petals stay purple and counted (A3 holds), the core loop never needs elevation
-  (A5 holds), and pressing "Measure restricted areas…" returns the launcher stub's own
-  words. That is a degraded, honest state — the release body says so in plain text.
-- The button is **not** gated per-platform in this slice. Gating it would be a frontend
-  change with no way to observe it here (no Windows/Linux desktop available to this lane),
-  and an honest typed error is better than an untested UI branch. Deferred with a reopen
-  trigger (§4).
-
-## 3. The mechanism — what the pipeline does differently
+## 3. The mechanism — what the pipeline and the app do differently
 
 ### 3.1 The matrix selects runner and bundle set per target
 
 `release.yml`'s `build` matrix becomes an `include` list; each entry carries the target
 triple, the runner, and the bundle targets:
 
-| target | runner | `--bundles` |
-|---|---|---|
-| `aarch64-apple-darwin` | `macos-latest` | `app,dmg` (unchanged) |
-| `x86_64-apple-darwin` | `macos-latest` | `app,dmg` (unchanged) |
-| `x86_64-pc-windows-msvc` | `windows-latest` | `nsis` |
-| `x86_64-unknown-linux-gnu` | `ubuntu-latest` | `deb,appimage` |
+| target | runner | `--bundles` | ships in payload |
+|---|---|---|---|
+| `aarch64-apple-darwin` | `macos-latest` | `app,dmg` (unchanged) | app + admin |
+| `x86_64-apple-darwin` | `macos-latest` | `app,dmg` (unchanged) | app + admin |
+| `x86_64-pc-windows-msvc` | `windows-latest` | `nsis` | **app only** |
+| `x86_64-unknown-linux-gnu` | `ubuntu-latest` | `deb,appimage` | app + admin |
 
-`runs-on: ${{ matrix.os }}`; `fail-fast: false` stays (a Linux tooling failure must not
-mask a Windows ship, and vice versa). Windows and Linux build their **host** triple — no
-cross-compilation anywhere, which is what keeps `stage:admin --target <triple>` on the
-host-binary fast path.
+`runs-on: ${{ matrix.os }}`; `fail-fast: false` stays. Windows and Linux build their
+host triple — no cross-compilation anywhere.
 
 ### 3.2 Linux leg system dependencies (exact set)
 
@@ -117,173 +136,315 @@ Same webview set CI already proves, plus nothing speculative:
 sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 ```
 
-The AppImage step gets `APPIMAGE_EXTRACT_AND_RUN: 1` in its env so the bundler's
-`linuxdeploy` (itself an AppImage) never needs FUSE on the runner. If the first run still
-fails with a FUSE error on `ubuntu-24.04`, the named remediation is
-`sudo apt-get install -y libfuse2t64` — and if that does not resolve it, the pre-declared
-fallback in §5 fires. This is ranked risk #1 precisely because it cannot be verified from
-a macOS design lane.
+The AppImage step gets `APPIMAGE_EXTRACT_AND_RUN: 1` so the bundler's `linuxdeploy`
+(itself an AppImage) never needs FUSE on the runner. If the first run still fails with a
+FUSE error on `ubuntu-24.04`, the named remediation is `sudo apt-get install -y
+libfuse2t64`; if that does not resolve it, the pre-declared fallback in §5 fires.
 
-### 3.3 Verification is hash-based and name-agnostic (the heart of the slice)
+### 3.3 Verification: hash-based, name-agnostic, per-platform expected sets
 
-Today's verify step asks macOS questions (`lipo -archs`, `Contents/MacOS`). The new step
-asks one platform-neutral question on every leg:
+The rule each leg's verify step enforces, stated once:
 
-> Does the packaged payload contain, **byte-identical by SHA-256**, both
-> `target/<triple>/release/diskguardian-app[.exe]` and
-> `target/<triple>/release/diskguardian-admin[.exe]`?
+> The packaged payload contains, **byte-identical by SHA-256 to the cargo build products
+> under `target/<triple>/release/`**, every binary in that platform's expected set — and,
+> on Windows, **no binary outside it**.
 
-Mechanically, per leg: compute the two reference hashes from the cargo output directory
-for that triple (`sha256sum`; present in the bash shells of all three runners), extract
-the packaged payload, enumerate its files, and require **exactly** the two references to
-appear among the extracted files' hashes. Fail with the missing binary's name otherwise.
-Hash equality proves presence *and* correctness *and* architecture in one check — the
-binary under `target/<triple>/` is that triple by construction, so no `dumpbin` or
-`file`-parsing is needed. It also sidesteps the one fact this lane could not pin down:
-what Tauri names the main binary inside each package format (`DiskGuardian.exe` vs
-`diskguardian-app.exe`, `/usr/bin/DiskGuardian` vs `/usr/bin/diskguardian-app`). The check
-does not care.
+| leg | expected set (hash-matched) | negative assertion |
+|---|---|---|
+| macOS (both) | `diskguardian-app`, `diskguardian-admin` | — |
+| Windows | `diskguardian-app.exe` **only** | **no file named `diskguardian-admin*` (case-insensitive) anywhere in the extracted payload** — pins the ruling: a config-merge regression or a stale staged sidecar cannot quietly re-ship the helper |
+| Linux (both formats) | `diskguardian-app`, `diskguardian-admin` | — |
 
-Payload extraction per platform:
+Mechanically, per leg: compute reference hashes from the cargo output directory
+(`sha256sum` exists in all three runners' bash shells), extract the packaged payload,
+enumerate its files, require each reference to appear among the extracted hashes, and on
+Windows require the admin name to appear nowhere. Hash equality proves presence,
+correctness **and** architecture in one check (a binary under `target/<triple>/` is that
+triple by construction) and does not care what the bundler renames the main binary to
+inside each format — the one fact this lane could not pin down from macOS. Extraction
+per format: macOS keeps the existing `lipo`/`test -x` assertions and adds the hashes;
+Windows `7z x` the `*-setup.exe` (fallback: silent-install `setup.exe /S /D=<scratch>` —
+stronger, it proves installability, just slower); Linux `dpkg-deb -x` and
+`./DiskGuardian_*.AppImage --appimage-extract` (type-2 extraction, no FUSE needed).
 
-- **macOS (kept, plus hashes):** the existing `lipo`/`test -x` assertions stay verbatim;
-  add hash comparison of `Contents/MacOS/{diskguardian-app,diskguardian-admin}` against
-  the two references.
-- **Windows:** `7z x` the produced `*-setup.exe` into a scratch dir (windows runners ship
-  7-Zip; NSIS payloads are 7z-readable), enumerate, hash-match. Fallback if 7z cannot
-  read the payload: silent-install it (`setup.exe /S /D=<scratch>` — Tauri's NSIS default
-  install mode is per-user, no elevation on a throwaway runner) and hash the installed
-  files. That fallback is *stronger* (it proves installability), it is just slower.
-- **Linux:** `dpkg-deb -x *.deb pkg/` and `./DiskGuardian_*.AppImage --appimage-extract`
-  (type-2 runtime extraction; no FUSE needed to extract), enumerate both, hash-match
-  against the same two references.
-
-Every Windows step gets `shell: bash` explicitly — the windows runner default is pwsh,
-and the existing steps' bash idioms (`set -euo pipefail`, `$(ls -d …)`) would fail in it
-in confusing ways. Git bash ships `sha256sum`, so all four legs run near-identical verify
-scripts.
-
-The step also prints every hash it compared to the job log — those lines are the evidence
-the acceptance rule's stage B checks against (§7).
+Every Windows step gets `shell: bash` explicitly (runner default is pwsh; the existing
+steps' bash idioms would fail in it confusingly). Each verify step prints every hash it
+compared to the job log — those lines are the evidence stage B checks against.
 
 ### 3.4 Upload stays one-artifact-per-triple
 
 `upload-artifact` keeps the name `diskguardian-<triple>` (the suffix source the release
-lane already trusts — that trust was earned by the one-arch-overwrites-the-other bug) and
-gains per-leg path globs: `target/<triple>/release/bundle/nsis/*-setup.exe` (Windows),
-`target/<triple>/release/bundle/{deb/*.deb,appimage/*.AppImage}` (Linux). `if-no-files-found:
-error` stays.
+lane already trusts) with per-leg globs: `nsis/*-setup.exe` (Windows),
+`{deb/*.deb,appimage/*.AppImage}` (Linux), macOS unchanged. `if-no-files-found: error`
+stays.
 
 ### 3.5 The release lane collects, renames by triple, and asserts the exact set
 
-The `release` job (still `macos-latest` — it needs `ditto` for the `.app` zips) extends
-its collect step: copy `*.exe`, `*.deb`, `*.AppImage` from the artifact tree, renaming
-each to carry its triple, derived from the artifact directory exactly as the `.app` loop
-already does:
+Unchanged from the original design: the `release` job (still `macos-latest` — it needs
+`ditto`) extends its collect step to the new single-file artifacts, renaming each with
+its triple derived from the artifact directory (the pattern that fixed the
+one-arch-overwrites-the-other bug):
 
 - `DiskGuardian-x86_64-pc-windows-msvc-setup.exe`
 - `DiskGuardian-x86_64-unknown-linux-gnu.deb`
 - `DiskGuardian-x86_64-unknown-linux-gnu.AppImage`
 
-Two new assertions replace today's `[ "$count" -ge 2 ]`:
-
-1. **Exact expected count, derived from the same matrix** (7 with the full matrix: 2 dmg +
-   2 zip + 1 exe + 1 deb + 1 AppImage). The count is not hard-coded; it is computed from
-   the matrix definition the lane imports, so the pre-declared fallback in §5 (drop
-   AppImage) changes the expectation honestly rather than breaking it.
-2. **No duplicate asset names**: `ls out | sort | uniq -d` must be empty — the mechanical
-   guard for the class of bug that once shipped one arch as both.
+Plus two assertions: the **exact matrix-derived asset count** (7 with the full matrix:
+2 dmg + 2 zip + 1 exe + 1 deb + 1 AppImage) and **no duplicate asset names**
+(`ls out | sort | uniq -d` empty).
 
 ### 3.6 The release body tells each platform what it will actually see
 
-The notes gain a per-platform block, in the same register as the existing Gatekeeper text:
+Per-platform blocks, same register as the existing Gatekeeper text:
 
-- **macOS (existing, kept):** unsigned → quarantine, right-click Open or the
+- **macOS (existing, kept):** unsigned → quarantine; right-click Open or the
   `xattr -dr com.apple.quarantine` command.
-- **Windows:** unsigned → SmartScreen "Windows protected your PC" on first run;
-  *More info → Run anyway* is the route. Plus one honest sentence: **"Measuring
-  restricted areas with administrator rights is macOS-only in this version; on Windows
-  those areas stay shown as restricted."**
-- **Linux:** the `.deb` is unsigned (install with `sudo apt install ./DiskGuardian…deb`
-  or `dpkg -i`); the AppImage needs FUSE, which some distros omit —
-  `./DiskGuardian…AppImage --appimage-extract-and-run` is the no-FUSE route. Same
-  macOS-only measurement sentence.
+- **Windows:** unsigned → SmartScreen "Windows protected your PC"; *More info → Run
+  anyway*. Then, plainly: **"Measuring restricted areas asks Windows for administrator
+  rights (one UAC prompt per app session) — the app re-launchs itself elevated to
+  measure, and the elevated copy only measures; it never deletes. Decline it and
+  everything else works, with those areas shown as restricted. This behaviour is new in
+  0.1.1."**
+- **Linux:** `.deb` is unsigned (`sudo apt install ./DiskGuardian…deb` or `dpkg -i`);
+  AppImage needs FUSE, which some distros omit — `--appimage-extract-and-run` is the
+  no-FUSE route. **"Measuring restricted areas is not available on Linux yet; those
+  areas stay shown as restricted."**
 
-### 3.7 Supporting changes that the above makes necessary
+### 3.7 Windows self-elevation — the four new problems, solved
 
-1. **`resolve_helper()` `.exe` fix** (`apps/desktop/src-tauri/src/admin.rs`): on Windows,
-   look for `diskguardian-admin.exe` beside the app binary (a `cfg!(windows)` name
-   selection, ~3 lines), so the honest stub message is the one a Windows user sees.
-   Compile-proven by CI's existing `cargo check -p diskguardian-app` on Windows;
-   **runtime-unobserved** (no Windows desktop in this lane) and stated as such.
-2. **Per-platform bundle targets** — new `apps/desktop/src-tauri/tauri.windows.conf.json`
-   (`"bundle": {"targets": ["nsis"]}`) and `tauri.linux.conf.json`
-   (`"targets": ["deb", "appimage"]`), so a local `bun run tauri:build` outside macOS
-   works and the workflow's `--bundles` flag agrees with config rather than silently
-   overriding it. The macOS config is untouched.
-3. **Full icon set** — regenerate `src-tauri/icons/` with `bunx tauri icon` from the
-   existing square source PNG. Today's `icon: ["icons/icon.png"]` is sufficient for
-   `.app`/`.dmg` but NSIS wants an `.ico` and `.deb` wants sized PNGs; rather than bet on
-   bundler auto-conversion, ship the generated set and list it in `tauri.conf.json`.
-   Regenerated from the same source, the macOS icon appearance does not change.
+#### 3.7.1 `crates/admin` becomes lib + bin, so the serve loop has one implementation
+
+The serving loop (`serve(dir, idle_secs, stale_secs)`), the one-shot mode, job
+validation, and the status/results writers move from `main.rs` into a new
+`crates/admin/src/lib.rs` — **unchanged code, moved**; `main.rs` becomes a thin wrapper
+calling the lib, and the bin stays the macOS/Linux sidecar with the same name, same
+protocol, same tests. The app crate takes the lib as a **Windows-only target dependency**
+(`[target.'cfg(windows)'.dependencies]`), so macOS and Linux app binaries do not even
+link a serve path. `JOB_VERSION`, the wire shapes and every admin test move with the
+code; nothing in the protocol changes, which is the whole point: an elevated Windows
+instance serving `job-<n>.json → results-<n>.jsonl + status-<n>.json` is
+indistinguishable, at the file level, from the macOS helper.
+
+#### 3.7.2 The launcher: `ShellExecuteW` with the `runas` verb, isolated in a mini-crate
+
+The `Launch` seam gets a Windows filler that does what osascript does on macOS: raise the
+OS consent, start the serving process, and return once the user has answered — **without
+holding a child handle**. The primitive with exactly those semantics is
+`ShellExecuteW(null, "runas", <current_exe>, "--dg-admin-serve <dir>", null, SW_HIDE)`:
+it shows the UAC prompt, and on approval spawns the elevated process and returns
+(whether it returns before or after the prompt is answered is handled below by not
+trusting it). The maintainer's "shouldn't windows just use application elevation" maps
+onto this directly.
+
+- **Why not the `runas` crate:** its `status()` waits for the child to **exit** — the
+  child is a session-long server, so the first `scan_restricted` would park on the launch
+  await until the whole session ends. We need prompt-then-return, not prompt-then-wait.
+  If, at build time, a vetted crate with those semantics is preferred over ~60 lines of
+  our own, the seam accepts it; the requirement is the semantic, not the supplier.
+- **Where the one `unsafe` lives:** a new windows-gated mini-crate (`crates/win-elevate`,
+  ~60 lines, no tauri, no core — one public function `elevate_serve(exe, args) ->
+  io::Result<ElevateOutcome>` wrapping the single `ShellExecuteW` call). `crates/admin`
+  keeps `unsafe_code = "forbid"` untouched; the app crate takes the mini-crate as a
+  windows-only target dependency and stays `unsafe`-free. The mini-crate's entire source
+  is the review surface for the only `unsafe` this increment adds anywhere.
+- **Declined UAC maps onto the existing outcome for free.** `runas` refusal
+  (user clicked No / closed the prompt) surfaces as a failed `ShellExecuteW` and is
+  returned as `LaunchOutcome { success: false, stderr: "the user cancelled the elevation
+  prompt" }` — and `refusal_message` already renders any stderr containing "cancel" as
+  *"Administrator access was declined — restricted areas stay unmeasured"*. Zero changes
+  to the refusal path; the sentence the macOS user sees is the sentence the Windows user
+  sees.
+- **UAC is once per session because the flag already exists.** The launcher is only
+  invoked when `!session.daemon_started`, and `daemon_started` flips only after
+  `daemon.ready` appears — the one-prompt-per-session cadence is `AdminSession`'s
+  property, not the launcher's. A second pass in the same app run reuses the serving
+  instance and asks nothing.
+- **An abandoned prompt cannot be dismissed, and the design says so.** macOS force-kills
+  `osascript` at the pass deadline; **UAC prompts cannot be programmatically dismissed —
+  that is Windows' design, not ours.** An unanswered prompt therefore parks that one
+  pass until the user answers it or quits the app. This is bounded and honest: the
+  session lock is held across the launch on purpose, so no second prompt can stack
+  behind an unanswered one; answering resumes normally; declining returns the refusal
+  message with the tree untouched. Stated limit, recorded in §6.
+- **Ready-wait uses the outer budget, not `READY_WAIT`.** Because `ShellExecuteW`'s
+  return timing relative to the prompt answer is not something this design trusts, the
+  Windows launcher polls `daemon.ready` with the user-paced outer bound
+  (`DEADLINE_SECS + OUTER_GRACE_SECS`), not the 30-second `READY_WAIT` that suffices
+  after a blocking osascript. Approval without a ready instance still fails with the
+  existing "the administrator helper did not start after approval".
+
+#### 3.7.3 Second-instance behaviour: the argv branch runs before Tauri exists
+
+`main.rs` becomes:
+
+```rust
+fn main() {
+    // Before ANY tauri code: an elevated re-exec serves the admin protocol and exits.
+    // No Builder, no window, no webview, no command surface can come into existence.
+    #[cfg(windows)]
+    match diskguardian_app::admin_serve_mode(std::env::args_os()) {
+        ServeMode::Normal => {}
+        ServeMode::Serve(dir) => std::process::exit(diskguardian_admin::serve_standalone(dir)),
+        ServeMode::BadUsage => std::process::exit(2),
+    }
+    diskguardian_app::run();
+}
+```
+
+- **Flag:** `--dg-admin-serve <dir>` (two args; `BadUsage` covers the flag without an
+  operand — an elevated child with broken argv exits 2 rather than opening an elevated
+  window). `admin_serve_mode` is a pure, unit-tested classifier in the app lib; the
+  dispatch in `main` is four lines that reference no Tauri type.
+- **No second window, structurally.** The serving instance never constructs a
+  `tauri::Builder`; it cannot open a window because the code that opens windows is never
+  reached. Release builds already set `windows_subsystem = "windows"` (no console flash;
+  debug builds may flash a console — cosmetic, debug-only, stated).
+- **Two user-launched copies of the app** behave as they do on every platform today:
+  two windows, two independent sessions, and if both press Measure, two UAC prompts —
+  correct, because they are two apps, and the same as macOS raising two osascript
+  dialogs for two app copies. Out of scope to change.
+- **Abuse of the flag by hand** grants nothing: invoking `DiskGuardian.exe
+  --dg-admin-serve <dir>` elevated already requires the consent of someone holding admin
+  rights, and that someone can run anything elevated. The branch reads job files only
+  from a directory the invoker controls, walks only the paths in them read-only, writes
+  only into that directory, and exits when the heartbeat there goes stale — the same
+  same-writer trust and zero-delete posture as the macOS helper, stated in §2.
+
+#### 3.7.4 Liveness: the existing heartbeat, uniformly — not a Windows job object
+
+The heartbeat (`session.alive`, touched by the unelevated parent every 5 s, staleness
+budget 30 s) plus the staging-directory-disappearance and idle exits are **kept as the
+liveness mechanism on Windows too**, because the serve loop is now the same lib code
+(§3.7.1) and the parent-side `AdminSession` is untouched.
+
+Why not a job object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`), which a spawned parent could
+use to tie the elevated child's death to its own: it would require `ShellExecuteExW` with
+a retained process handle (more `unsafe` surface than the mini-crate's one call), a
+post-spawn assignment race, and handle-lifetime reasoning across the whole app — to buy
+exactly one thing: killing the elevated instance **immediately** on parent force-kill
+instead of within the existing 30-second staleness budget. That budget is already the
+accepted, field-observed macOS behaviour (C23's record: helper alive at +3 s after a hard
+kill, gone by +8 s), and the lingering instance is inert without a job file and writes
+nowhere outside the staging directory. **Decision: uniform heartbeat; job object
+deferred** with reopen trigger: a Windows user or security scanner reports the ≤30 s
+elevated tail as a problem. Then it lands behind the same `Launch` seam as everything
+else.
+
+Force-kill answer, stated: kill the parent and the elevated instance measures nothing
+further (no job file can reach it), notices the stale heartbeat within its 30 s budget,
+and exits. It cannot outlive the session by more than that.
+
+#### 3.7.5 Config and CI changes the rulings make necessary
+
+1. **Bundle config moves wholly into per-platform files**, so no merge semantics can
+   produce a mixed result (arrays in Tauri's platform merge may replace or append —
+   carrying each list in exactly one place is correct under either rule):
+   `tauri.macos.conf.json`: `targets ["app","dmg"]`, `externalBin
+   ["binaries/diskguardian-admin"]`; `tauri.linux.conf.json`: `targets ["deb","appimage"]`,
+   same `externalBin`; `tauri.windows.conf.json`: `targets ["nsis"]`, **no `externalBin`
+   at all**. The base `tauri.conf.json` drops both keys. Local `bun run tauri:build`
+   then works on every platform, and the Windows leg cannot validate a sidecar it must
+   not ship.
+2. **`stage:admin` gating:** release.yml stages on macOS/Linux only; ci.yml's stage step
+   gains `if: runner.os != 'Windows'` (with `externalBin` absent on Windows there is
+   nothing to validate).
+3. **ci.yml runs the app-crate tests** (`cargo test -p diskguardian-app --tests`) on the
+   ubuntu engine lane (webkit deps + staging already present; the mock runtime makes the
+   IPC suite headless). Today CI only `cargo check`s the app crate — the injected-launch
+   tests this slice adds would otherwise never run in CI anywhere.
+4. **The non-macOS launcher stub narrows to Linux:** `#[cfg(not(target_os = "macos"))]`
+   becomes `#[cfg(target_os = "linux")]` with the message "administrator measurement is
+   not available on Linux yet" (Windows now has a real launcher).
+5. **New tests riding the existing seams** (all CI-runnable, none needing elevation):
+   - classifier: `admin_serve_mode` returns `Serve(dir)` for the flag pair, `Normal` for
+     ordinary argv, `BadUsage` for the bare flag;
+   - in-process serve: the lib's `serve_standalone` runs against a temp staging dir with
+     a crafted job and produces the results/status files (the protocol tests that exist
+     today, now pointed at the lib entry the Windows branch calls);
+   - injected-launch IPC: a Windows-shaped decline returns the exact refusal sentence
+     with `daemon_started` still false and the tree untouched; a successful injected
+     launch plus a ready file flips `daemon_started`, and the injected launcher is
+     **not called again** for a second pass in the same session (the once-per-session
+     property, pinned);
+   - a source-order guard in the style the repo has used before (C28's source-level
+     markup guard): a test asserting `main`'s serve dispatch textually precedes any
+     `Builder` reference — crude, and exactly the point: the elevated path must not be
+     one refactor away from initialising Tauri.
+   - Optional, pre-declared droppable if flaky: a harness-less Windows integration test
+     that owns its `main`, re-execs **itself** through `win_elevate` in serve mode
+     against a temp dir, and asserts the round-trip. On GitHub's already-elevated
+     Windows runners no prompt fires, so this actually runs the real `ShellExecuteW`
+     path headlessly; it proves the wrapper and the dispatch, **not** consent behaviour.
 
 ### 3.8 What explicitly does NOT move
 
-- `crates/core` — untouched. No scan, model, view, delete, or duplicates change.
-- The serialized shape of `Tree`/`Node`/`ViewNode` across the Tauri IPC boundary —
-  unchanged. The admin wire protocol (`ResultLine`, `JOB_VERSION = 1`) — unchanged; the
-  helper binary is *byte-different per platform* but speaks the same schema, which is
-  precisely why it can ship in every artifact without a version bump.
-- The Tauri command surface (`apps/desktop/src-tauri/src/`) — no command added, removed,
-  or re-typed. `resolve_helper` is private plumbing behind an unchanged command.
-- Frontend TypeScript (`apps/desktop/src/`) — untouched.
-- The deletion guard, the core loop's privilege profile (A5), and the helper's
-  no-delete-call-sites property — untouched.
+- `crates/core` — untouched. No scan, model, view, delete or duplicates change.
+- The serialized shape of `Tree`/`Node`/`ViewNode` across the Tauri IPC boundary, and
+  the admin wire protocol (`JOB_VERSION = 1`) — unchanged. The elevated Windows instance
+  is a different *host* for the same protocol, not a protocol change.
+- The Tauri command surface — no command added, removed or re-typed. `AdminSession`,
+  `scan_restricted`'s flow, the graft verification and `admin_authorised` are unchanged;
+  only the cfg-gate on the launcher and the new Windows filler move.
+- Frontend TypeScript (`apps/desktop/src/`) — untouched (Measure button stays ungated,
+  per the ruling).
+- The deletion guard, the core loop's privilege profile (A5), and the no-delete-call-
+  sites property of the serving code — untouched. On Windows the *binary* containing
+  deletion code runs elevated, but the branch that does so initialises no command
+  surface, so no deletion code path is reachable elevated — stated in §2 and §6.
 
 ## 4. Precedent
 
-This extends two proven in-tree mechanisms rather than inventing one:
+- **The `Launch` seam** (`admin.rs` ~line 87) was built so "a future SMAppService
+  launcher replaces one module and no protocol" (R3 design §10, ISA decision). The
+  Windows self-elevation launcher is that prophecy arriving early: one module, same
+  protocol, same `AdminSession`.
+- **The human-test precedent is C23's AC4**, where a real consent dialog could not be
+  automated ("automating that is not something this project will ever do, which is why
+  the claim needed a human") and the claim waited for the principal's hands. The Windows
+  UAC arms of this design follow the same rule (§7 Stage H).
+- **The heartbeat's three exits** are field-proven on real hardware (C23 record) and
+  unit-tested; reusing them on Windows extends that mechanism rather than inventing a
+  parallel one.
+- **The hash-verify + artifact-dir-suffix patterns** stand as in the original design
+  (§3.3–§3.5), extending the pipeline's own "build asserts what ships; nothing rebuilds
+  in the release lane" shape and the matrix-with-runner dimension `ci.yml` models.
+- **New architecture, and why precedent does not fit it:** the `win-elevate` mini-crate
+  and the lib+bin split of `crates/admin` have no in-tree precedent. The alternative —
+  putting `ShellExecuteW` in the app crate, or duplicating the serve loop in the app —
+  was rejected: the first puts the repo's only `unsafe` in its largest crate with no
+  forbid lint, the second forks the single most security-audited loop in the codebase.
 
-1. **The release pipeline's own two-lane, verify-before-upload shape** (`release.yml`
-   header comment: "build … asserts they contain what they must … Nothing here rebuilds,
-   so what ships is what was verified"). The hash-verify step generalizes the existing
-   macOS "Verify the bundle contains what it must" step from arch-inspection (`lipo`) to
-   content-identity, applied to more package formats.
-2. **The artifact-dir-derived triple suffix** in the release lane's collect step — the
-   exact pattern introduced to fix the silent one-arch-overwrites-the-other asset bug.
-   Windows/Linux renames ride the same derivation, and the new duplicate-name assertion
-   mechanically pins the bug class shut.
+## 5. Minimal first slice — and the pre-declared fallbacks
 
-The matrix-with-runner dimension is the same shape `ci.yml` already models (`os:` matrix
-over three runners). Nothing here is new architecture; the one genuinely new tool
-interaction is the payload extraction per format (§3.3), and each has a named fallback.
+**One slice attempts all four legs.** Windows/Linux are independent under
+`fail-fast: false`; each leg's verify is self-contained; the release lane's expected
+count derives from the matrix.
 
-## 5. Minimal first slice — and the pre-declared fallback
+**Ship gate for the Windows asset includes Stage H (the hand test, §7).** The maintainer
+put elevation in the slice; the repo's own rule ("No 'should work'") and the C23 AC4
+precedent say a consent behaviour ships only after a human has seen it. If H cannot run
+before the 0.1.1 tag, the macOS+Linux assets ship and the Windows asset waits for H on
+the next tag — a pre-declared partial-ship path, not a failure. macOS and Linux assets
+ship on CI evidence alone, exactly as v0.1.0 did.
 
-**One slice attempts all four legs.** Windows and Linux are independent under
-`fail-fast: false`, each leg's verify is self-contained, and the acceptance rule derives
-its expected set from the matrix — so a partial landing is representable by editing the
-matrix, not by weakening the rule.
-
-**Pre-declared fallback (decided now, before any CI data):** if the Linux leg's AppImage
-cannot be produced hash-verified within the iteration cap (§7), the fallback removes
-`appimage` from that leg's `--bundles` and ships **deb only** — the deb's verification
-chain (`dpkg-deb`) has no third-party tooling dependency. The fallback is *not* "drop
-Linux"; it is "drop the one bundle format whose tooling failed". Windows has no
-equivalent fallback below NSIS (msi is deliberately deferred, §6), so a Windows failure
-within the cap kills the slice rather than degrading it.
+**Pre-declared fallback:** if the Linux AppImage cannot be produced hash-verified within
+the iteration cap (§7), that leg drops `appimage` and ships deb-only. Windows has no
+fallback below NSIS (msi deliberately deferred) — a Windows tooling failure within the
+cap kills the slice rather than degrading it.
 
 **Explicitly deferred, each with its reopen trigger:**
 
-| Deferral | Why now | Reopen trigger |
+| Deferral | Why | Reopen trigger |
 |---|---|---|
-| `msi` on Windows | NSIS is Tauri's default; msi adds the WiX download failure surface and doubles the verify set for zero new capability; SmartScreen treats both identically | An enterprise/GPO deployment request, or a need for machine-wide install defaults |
-| Windows/Linux elevation launchers (`pkexec`, UAC `runas`) + per-platform gating of the Measure button | New privileged code paths on platforms this lane cannot run; an honest typed error beats an untested UI branch | User demand, or the signing-identity work that R3's design already anticipates — they slot into the existing `Launch` seam |
-| arm64 Linux (`aarch64-unknown-linux-gnu`) | x86_64 is the CI-proven runner story; ARM Linux needs a cross or ARM runner decision | A user on ARM Linux asks |
-| macOS `universal2` single dmg | Two dmgs work today; unification is cosmetic | A user-confusion report about picking a dmg |
+| `msi` on Windows | NSIS is Tauri's default; msi adds the WiX download failure surface and doubles the verify set for zero new capability | Enterprise/GPO deployment request, or machine-wide install defaults |
+| Linux elevation (`pkexec` + `.policy` file) | Polkit is daemon-mediated, not self-elevation; its policy file is a new security-reviewed mechanism. Helper already ships there, so it is a launcher swap + policy file | User demand, or the signing-identity work |
+| Job-object liveness on Windows | ≤30 s inert tail after force-kill matches accepted macOS behaviour; a job object adds handle-lifetime `unsafe` for that one improvement (§3.7.4) | A user or scanner reports the elevated tail |
+| Hiding vs erroring the Measure button on Linux | Untested UI change; an honest typed error is better than an unobserved branch | Bundled with the pkexec launcher day |
+| arm64 Linux | x86_64 is the CI-proven story | A user on ARM Linux asks |
+| macOS `universal2` single dmg | Two dmgs work today | User-confusion report |
 | Signing / notarization / SmartScreen reputation | No identity exists (recorded R3 decision); warnings are stated honestly instead | Developer ID acquired |
-| `stage-admin.ts` hard-coded `../../target` | Does not fire on CI runners; already in the ISA log | The release workflow ever sets `CARGO_TARGET_DIR` or builds in a worktree |
-| A published `sha256sums.txt` beside assets | Stage-B already hash-checks downloads; a checksums file is user-facing redundancy | First corrupted-download report |
+| `stage-admin.ts` hard-coded `../../target` | Does not fire on CI runners; in the ISA log | The workflow ever sets `CARGO_TARGET_DIR` or builds in a worktree |
+| Published `sha256sums.txt` beside assets | Stage-B already re-hashes downloads | First corrupted-download report |
 
 ## 6. Claim and anti-claim impact — exact ISA amendments
 
@@ -293,181 +454,253 @@ The maintainer lands these; the text is written to be pasted.
 
 > - Windows and Linux builds. The code is written portable and cross-platform, but only macOS is tested and shipped at v0.1.
 
-*(Replaced by C30 landing; nothing else in that list moves.)*
+**2. New claim (written so its CI-provable and hand-test-only arms are visibly
+different, and the hand-test arms are open until the record exists):**
 
-**2. New claim:**
-
-> ### C30 — Every supported platform ships an installable, structurally verified artifact  `[ ]`
+> ### C30 — Every supported platform ships an installable, structurally verified artifact; Windows measures restricted space by self-elevation  `[ ]`
 > A tagged release attaches installable artifacts for macOS arm64 + x86_64 (`.dmg` + `.app`
 > `.zip`), Windows x86_64 (NSIS `.exe`), and Linux x86_64 (`.deb` + `.AppImage`) — every
-> artifact named with its target triple, every artifact verified before upload to contain,
-> byte-identical by SHA-256, both `diskguardian-app` and `diskguardian-admin` as built for
-> that triple, and the release body naming what each platform's OS will warn about
-> (Gatekeeper, SmartScreen, unsigned deb / AppImage FUSE). Administrator measurement stays
-> macOS-only and is stated as such; the helper ships everywhere and the job/results
-> protocol is unchanged.
-> **Probe:** the release workflow's per-leg "Verify" steps (hash equality against
-> `target/<triple>/release/`, printed in the job log) plus the release lane's exact-count
-> and duplicate-name assertions; audited after the tag by downloading the draft release's
-> assets and re-hashing them against the same log.
-> **Falsifier:** any shipped platform artifact whose payload lacks either binary by hash;
-> any asset named without its triple; a tag whose draft release carries fewer assets than
-> the build matrix produces; a release body that omits a platform's warning.
-
-*(The claim-check gate requires the `**Probe:**` line — included. It is ticked only when a
-tag has actually been run and audited, which is why it opens `[ ]`.)*
+> artifact named with its target triple; each verified before upload to contain,
+> byte-identical by SHA-256, exactly the binaries that platform ships (macOS/Linux: app +
+> helper; Windows: app only, with no `diskguardian-admin*` file anywhere in the payload);
+> and the release body naming what each platform's OS will warn about (Gatekeeper,
+> SmartScreen, unsigned deb / AppImage FUSE).
+>
+> On Windows, measuring restricted areas re-executes the app elevated (UAC `runas`), the
+> elevated instance serves the unchanged job/results protocol and exits with the session,
+> and — unlike macOS, whose privileged process is a measurement-only helper — the
+> privileged process is the app binary itself, gated by a pre-Tauri argv branch that
+> initialises no window, webview or command surface. That difference is stated, not
+> hidden. A UAC prompt cannot be dismissed programmatically; an abandoned prompt parks
+> that one pass until answered or the app exits, and no second prompt can stack.
+>
+> **Probe (CI arms, close on workflow evidence):** the release workflow's per-leg Verify
+> steps — expected-set hash equality plus the Windows negative assertion, hashes printed
+> in the job log — the release lane's exact-count and duplicate-name assertions, and the
+> post-tag download re-hash; the injected-launch IPC tests (decline maps to the exact
+> refusal sentence with the tree untouched; one launch per app session; the classifier),
+> run headless in CI.
+> **Probe (consent arms, open until the Stage H record lands):** one real UAC prompt per
+> app session — not one per scan — seen and photographed by a human on real Windows;
+> decline shows the refusal banner and changes nothing; the elevated instance grafts
+> measured petals; it is gone within its 30-second heartbeat budget after the parent is
+> force-killed. GitHub's Windows runners are already elevated, so the consent prompt
+> never fires there; these arms cannot close on CI evidence and do not pretend to.
+> **Falsifier:** any shipped platform artifact whose payload lacks a binary in its
+> expected set (or, on Windows, contains one outside it) by hash; any asset named without
+> its triple; a tag whose draft release carries fewer assets than the matrix produces; a
+> release body omitting a platform's warning; a second UAC prompt for a second pass in
+> one app session; an elevated instance still alive past its budgets after the parent dies.
+>
+> **Status:** opens `[ ]`. The CI arms close when the 0.1.1 tag is audited; the consent
+> arms stay open until the Stage H hand-test record exists, even if the artifact has
+> shipped in the meantime.
 
 **3. C23 gains one status line (mechanism untouched):**
 
-> **Platform note (2026-11-03):** the helper and its protocol ship in the Windows and
-> Linux artifacts unchanged, but the elevated launcher is macOS-only; on those platforms
-> the Measure button reports that in words and restricted petals stay restricted (A3, A5
-> hold). Per-platform launchers are deferred with a reopen trigger in the multi-platform
-> release design.
+> **Platform note (2026-11-03):** the helper and its protocol ship unchanged in the macOS
+> and Linux artifacts. Windows ships no helper: the app re-execs itself elevated (UAC)
+> and the elevated instance serves the same protocol from the same code (`crates/admin`
+> lib). On Linux the Measure button reports "not available on Linux yet" and restricted
+> petals stay restricted (A3, A5 hold). Per-platform launchers for Linux are deferred
+> with reopen triggers in the multi-platform release design.
 
-**4. § Decisions gains one entry:**
+**4. § Decisions gains two entries:**
 
+> - **Windows elevation is self-elevation through the existing launcher seam** (2026-11-03,
+>   maintainer ruling). The app re-execs itself with `runas`; the elevated instance takes a
+>   pre-Tauri argv branch and serves the unchanged job/results protocol. Accepted trade,
+>   stated in C30: the Windows privileged image is the whole app binary, not a
+>   measurement-only helper; the argv branch that selects serving constructs no window,
+>   webview or command surface, so no deletion code path is reachable elevated. The single
+>   `ShellExecuteW` lives in a ~60-line windows-gated crate (`crates/win-elevate`) so
+>   `crates/admin` keeps `unsafe_code = "forbid"` and the app crate gains no `unsafe`.
 > - **Release artifacts are hash-verified against the binaries cargo built for the
->   triple** (2026-11-03). Presence-by-name is what a bundler promises; content-identity
->   is what a user installs. The hash check also proves architecture for free (a binary
->   under `target/<triple>/` is that triple) and survives whatever the bundler renames
->   the main binary to inside each package format.
+>   triple, against per-platform expected sets** (2026-11-03). Presence-by-name is what a
+>   bundler promises; content-identity is what a user installs. The hash check also
+>   proves architecture for free and survives bundler renaming; the per-platform set plus
+>   the Windows negative assertion make "what ships" a decision the config makes and the
+>   pipeline enforces.
 
-**Anti-claims: none move.** A1 (deletion) — no delete path touched; the helper keeps zero
-delete call sites. A2/A6 (sizes, arcs) — engine untouched. A3 — restricted petals behave
-identically on the new platforms, including under the declined measurement. A4 — no scan
-changes. A5 — the core loop still never needs elevation; the new platforms ship *without*
-any elevation path at all. Nothing in this increment makes any C-claim harder to falsify;
-C12 remains macOS-worded by design ("`bun run tauri:build` produces `DiskGuardian.app`")
-and C30 is the cross-platform sibling, not a rewrite of it.
+**Anti-claims: none move.** A1 — no delete path is reachable elevated on any platform
+(the serving branch initialises no command surface; the helper keeps zero delete call
+sites). A2/A6 — engine untouched. A3 — restricted petals behave identically everywhere,
+including under decline. A4 — no scan changes. A5 — the core loop still never needs
+elevation; decline leaves everything but the restricted petals working. No existing
+claim becomes harder to falsify; C12 stays macOS-worded; C23's mechanism is untouched
+(only its platform availability widens).
 
-**README (user docs) must move in the same slice:** the Install section gains the
-per-platform artifact names and the local-build note (per-platform bundle targets), and
-the Status section's "Not yet: … Windows/Linux builds" line is deleted. The macOS-only
-"Administrator measurement" section gains one sentence naming the platforms where the
-button reports macOS-only.
+**README (user docs), same slice:** Install section gains the per-platform artifacts and
+local-build notes; Status drops "Windows/Linux builds" from Not-yet; the Administrator
+measurement section gains the Windows paragraph (UAC once per session, elevated copy
+only measures, macOS+Windows only, Linux pending).
 
-## 7. Measurable proof — pre-committed acceptance rule
+## 7. Measurable proof — pre-committed acceptance rule (amended)
 
-Written before any CI run of the new pipeline. Sample size is **n = 1 build per leg per
-run** and that is sufficient: every check below is deterministic (hashes, counts, names),
-not statistical; there is no effect size to estimate because the expected set *is* the
-specification. The one numeric threshold is derived from **prior** data, not data this
-run produces: known-good v0.1.0 assets are 2.96–3.20 MB, so the plausibility floor is
-**1,000,000 bytes** — a 3× margin under the smallest known-good bundle and orders of
-magnitude above any broken or empty package (a floor of 3 MB was considered and rejected:
-it would fail the known-good 2.96 MB zip).
+Written before any CI run of the new pipeline and before the hand test. Deterministic
+checks throughout; n = 1 build per leg per run suffices. The one numeric threshold is
+derived from prior data: known-good v0.1.0 assets are 2.96–3.20 MB, so the plausibility
+floor is **1,000,000 bytes** (3× margin under the smallest known-good; a 3 MB floor was
+considered and rejected — it would fail the known-good 2.96 MB zip).
 
 **Stage A — prove without publishing** (`workflow_dispatch` on the branch):
 
-- **A1** All four legs complete; every per-leg Verify step exits 0.
-- **A2** Every Verify log prints, for its leg, the SHA-256 of both reference binaries and
-  of the same content found inside the produced package, and each pair is equal.
+- **A1** All four legs complete; every per-leg Verify step exits 0, including the
+  Windows negative assertion.
+- **A2** Every Verify log prints, for its leg, the SHA-256 of each reference binary in
+  that platform's expected set and of the same content found inside the produced
+  package — equal — and (Windows) the enumeration showing no `diskguardian-admin*`.
+- **A3** The injected-launch/classifier/serve-lib tests run green in CI (ubuntu lane;
+  the windows-gated ones compile-and-run where applicable).
 
-**RED controls (run once, on a scratch branch, before A1/A2 are trusted):**
+**RED controls (scratch branch, before A1–A3 are trusted):**
 
-- **R-phantom** — edit each leg's verify step to also require a third reference hash that
-  cannot exist (a nonexistent `diskguardian-cli` build product). Every leg **must fail**.
-  A leg that stays green has decorative verification and the slice is killed until fixed.
-- **R-strip (macOS leg only, the one runnable end-to-end from this repo's lane)** — after
-  the build step, `rm "$APP/Contents/MacOS/diskguardian-admin"`, then run the verify step:
-  it **must fail** naming the admin helper. This pins the missing-file arm specifically,
-  on the leg whose mechanics are byte-identical to the other three.
+- **R-phantom** — each leg's verify step requires a third, nonexistent reference hash
+  (`diskguardian-cli`); **every leg must fail**. Green means decorative verification.
+- **R-strip** — macOS leg: `rm "$APP/Contents/MacOS/diskguardian-admin"` after build;
+  the verify step **must fail** naming the helper. (On Windows/Linux the absence arm is
+  exercised by R-phantom — their package formats cannot be tampered post-build without
+  rebuilding.)
+- **R-mutate (new)** — on every leg, overwrite a *reference* binary in
+  `target/<triple>/release/` with different bytes after the build step; the verify step
+  **must fail** on the hash mismatch. This is the content arm, and it works uniformly
+  because references are read at verify time.
+- **R-neg (Windows)** — scratch branch, deliberately stage a sidecar and add the old
+  `externalBin` to the Windows config; the Windows verify **must fail** on the negative
+  assertion (proves the ruling is enforced, not just preferred).
 
-**Stage B — publish** (tag `vX`):
+**Stage B — publish** (tag `v0.1.1`):
 
-- **B1** The draft release carries **exactly** the matrix-derived set (7 assets with the
-  full matrix): the two existing `.dmg` names, two `DiskGuardian-<apple-triple>.zip`,
-  `DiskGuardian-x86_64-pc-windows-msvc-setup.exe`,
-  `DiskGuardian-x86_64-unknown-linux-gnu.deb`,
-  `DiskGuardian-x86_64-unknown-linux-gnu.AppImage`.
-- **B2** Every asset ≥ 1,000,000 bytes (floor justified above).
-- **B3** `gh release download` of the draft, then SHA-256 of each downloaded asset's
-  *inner payload binaries* (extracted as in §3.3) equals the Stage-A log hashes — with
-  one exception stated in advance: dmg/zip/exe/deb/AppImage are containers, so the
-  downloaded-file hash is checked for the three single-file bundles renamed in §3.5 by
-  confirming the rename step's `cp` preserved content (`cmp` against the artifact copy),
-  and the payload-binary hashes are re-extracted and re-matched.
-- **B4** The collect step's duplicate-name assertion (`ls out | sort | uniq -d` empty)
-  passes — recorded in the job log.
+- **B1** Draft release carries exactly the matrix-derived 7 assets (2 dmg + 2
+  triple-suffixed zip + 1 `…x86_64-pc-windows-msvc-setup.exe` + 1 `…x86_64-unknown-linux-gnu.deb`
+  + 1 `…x86_64-unknown-linux-gnu.AppImage`).
+- **B2** Every asset ≥ 1,000,000 bytes.
+- **B3** `gh release download` of the draft; payload binaries extracted as in §3.3
+  re-hash equal to the Stage-A log; single-file bundles compared byte-wise to the
+  artifact copies after the triple rename.
+- **B4** Collect step's duplicate-name assertion passes (in the job log).
+- **B5** The draft release body contains, mechanically checked: the SmartScreen wording,
+  the Windows UAC/self-elevation paragraph, the Linux unsigned-deb and AppImage-FUSE
+  wording, and the "not available on Linux yet" sentence.
 
-**SHIP iff** R-phantom and R-strip fail as required, and A1, A2, B1–B4 all hold.
+**Stage H — the Windows hand test (consent arms; the ship gate for the Windows asset).**
+Runs on real Windows 10/11 with a standard unelevated interactive login and an admin
+credential available for UAC. **Synthetic fixture, per the repo's privacy rule** — no
+real user paths in any screenshot: before the test, create
+`C:\dg-fixture\locked\<files>` and deny the current user with
+`icacls C:\dg-fixture\locked /deny <user>:(OI)(CI)F`; the scan target is `C:\dg-fixture`,
+so every path in the evidence is synthetic. The operator then:
 
-**KILL / degrade (both directions pre-committed):**
+1. **H1 — approve and graft.** Install the exact NSIS asset from the draft release (the
+   one B3 hash-verified). Scan `C:\dg-fixture`. Expect the `locked` folder drawn purple
+   as restricted. Press *Measure restricted areas…*. Expect **one** UAC prompt (naming
+   DiskGuardian, publisher Unknown — the unsigned wart, same class as macOS's
+   osascript-attributed dialog). Approve. Expect the restricted petals to resolve and
+   graft in the same view.
+2. **H2 — once per session.** In the same app run, scan `C:\dg-fixture` again and press
+   Measure again. Expect **no second UAC prompt** and a served pass (the reused-session
+   property).
+3. **H3 — decline.** Quit, relaunch, scan, press Measure, **decline** the prompt.
+   Expect the banner "Administrator access was declined — restricted areas stay
+   unmeasured", the tree unchanged, no crash; press Measure once more and the prompt is
+   offered again (a refusal does not spend the session's authorisation).
+4. **H4 — liveness.** With a session serving (H1 state), force-kill DiskGuardian from
+   Task Manager. Expect the elevated DiskGuardian process present immediately after and
+   gone within 60 s (budget 30 s + observation margin), with nothing else changed.
 
-- If any platform cannot produce a hash-verified artifact within **5 CI iterations**, the
-  pre-declared fallback fires for that platform: Linux → deb only (§5); Windows → the
-  slice is killed (no fallback below NSIS) and the matrix reverts to macOS-only pending a
-  design revision. Both platforms failing the cap kills the increment; the honest state
-  remains "macOS only" and C30 does not open.
-- A partial ship (Windows + deb-only Linux) is a **valid ship** of an amended C30 that
-  names the omitted format — the amendment is mechanical (the matrix is the spec), not a
-  threshold moved after seeing data.
+**The record that closes the consent arms:** screenshots of (a) the purple restricted
+petals pre-measurement, (b) the UAC prompt, (c) the grafted view post-measurement with
+the admin report in the status line, (d) the declined banner from H3 — all showing only
+synthetic `C:\dg-fixture` paths — plus written confirmation of H2's no-second-prompt,
+H3's re-offer, and H4's timing observation (two Task Manager snapshots suffice). This is
+the same class of record C23's AC4 set: a human, a real dialog, a written trace.
 
-**UNDERPOWERED (decides nothing):** if `workflow_dispatch` cannot run on the branch, or
-the draft release's assets cannot be listed/downloaded (Actions permissions, `gh` auth),
-the attempt produces no verdict. Fix the infrastructure and re-run; no ship/kill is
-recorded from an attempt that could not have measured anything. An iteration spent this
-way does not count against the cap of 5.
+**SHIP iff** the RED controls fail as required, **A1–A3 hold**, and **B1–B5 hold** —
+with the platform split pre-declared: macOS and Linux assets **ship on that evidence**;
+the **Windows asset ships only if H1–H4's record also exists** (if H cannot run before
+the tag, macOS+Linux ship and Windows follows on the next tag after H — pre-declared
+partial ship, §5).
 
-**Merge-gate evidence shape:** the PR's rollup should carry the Stage-A run URL, the two
-RED-control run URLs, and the Stage-B draft-release asset listing (names + sizes) — the
-same terminal-state, complete-rollup standard `scripts/merge-verified.sh` enforces.
+**KILL / degrade:** any platform failing hash-verification within **5 CI iterations**
+fires its fallback (Linux → deb-only; Windows → slice killed, matrix reverts to
+macOS-only pending revision). Both failing kills the increment; C30 does not open. A
+hand test that contradicts an H arm (a second prompt appears; decline crashes or
+corrupts state; the elevated instance outlives its budget walking or writing) **kills
+the Windows elevation mechanism for that tag** — the artifact may still ship with the
+Measure button erroring honestly? **No** — pre-committed: an H failure removes the
+Windows asset from that tag entirely; an elevation mechanism that misbehaved under real
+consent does not ship in any form that release. Fix, re-run H, next tag.
 
-## 8. Top risks, ranked (1 = most likely to burn CI rounds)
+**UNDERPOWERED (decides nothing):** dispatch cannot run on the branch, draft assets
+cannot be listed/downloaded, or no Windows machine is available for H — infrastructure
+or logistics, not product. No verdict recorded; the attempt does not count against the
+iteration cap. (H-unavailability routes to the partial-ship path above rather than to a
+kill.)
 
-1. **Linux AppImage tooling on `ubuntu-24.04`.** The bundler's linuxdeploy is itself an
-   AppImage; if `APPIMAGE_EXTRACT_AND_RUN=1` is not honored end-to-end, FUSE is needed and
-   24.04 does not ship libfuse2 (the package is `libfuse2t64`). Cannot be verified from a
-   macOS lane. *Mitigation:* env var set in §3.2; named remediation package; pre-declared
-   deb-only fallback. **Falsifier of the design:** AppImage fails the 5-iteration cap even
-   with the fallback tooling — then the fallback ships and C30 is amended, not abandoned.
-2. **Icon set.** NSIS may refuse `icon.png`-only config (wants `.ico`); deb wants sized
-   PNGs. One wasted round if guessed wrong. *Mitigation:* regenerate the full set with
-   `bunx tauri icon` in the same PR (§3.7.3). **Falsifier:** bundler rejects the generated
-   set (wrong source aspect/size) — fix the source image; cosmetic only.
-3. **Windows step shells.** Runner default is pwsh; existing bash idioms fail confusingly
-   there. *Mitigation:* `shell: bash` on every Windows step (§3.3). **Falsifier:** a step
-   that still runs under pwsh — visible immediately in the log, one-line fix.
-4. **7z cannot extract the NSIS payload** (handler/version drift). *Mitigation:* named
-   fallback to silent-install verification (`/S /D=`), which is stronger evidence anyway
-   (§3.3). **Falsifier:** both routes fail — the Windows leg dies, and with it the slice
-   (no Windows fallback), honestly.
-5. **Asset-name collisions in the release lane** (the historical one-arch-overwrites-
-   another bug class). *Mitigation:* exact-count assertion derived from the matrix + the
-   duplicate-name guard (§3.5, B4). **Falsifier:** a duplicate name reaching the upload.
-6. **`resolve_helper` `.exe` fix is compile-verified only.** No Windows desktop exists in
-   this lane; the runtime message path is unobserved. *Stated, not claimed:* C30 claims
-   the binary **ships**, not that the button was pressed on Windows. **Falsifier:** a
-   Windows user reporting "helper not found" — the three-line fix is then wrong, not the
-   claim.
+**Merge-gate evidence shape:** PR rollup carries the Stage-A run URL, the four RED run
+URLs, the Stage-B asset listing (names + sizes) and body check, and — before the
+Windows asset ships — the H record. Complete rollup, terminal states, per
+`scripts/merge-verified.sh`.
 
-## 9. BUILD — recommended
+## 8. Top risks, ranked (1 = most likely to burn CI rounds or reviews)
 
-The premise survived every check: the symptom's cause is one workflow's matrix (§1);
-compilation on all three OSes is already CI-proven, so only bundling is new; the staging
-script is already Windows/Linux-triple-aware; the runtime degraded state on the new
-platforms is already implemented and honest; no ISA decision blocks it — the Out-of-Scope
-line this removes is exactly the line an increment like this exists to remove, and the
-project's own goal statement says "cross-platform … macOS-first". The verification
-mechanism is hash-based, so it cannot be fooled by bundler naming drift, and every risky
-unknown has either a named fallback or a pre-declared degrade path. The value is directly
-measurable (assets exist, are triple-named, are hash-verified), and the RED controls make
-the proof falsifiable rather than narrative.
+1. **Windows elevation semantics** (`ShellExecuteW` return timing vs the prompt; the
+   wrapper's argv quoting; debug-build console flash). *Mitigation:* ready-wait uses the
+   outer budget, not `READY_WAIT` (§3.7.2); the mini-crate is the only `unsafe` and is
+   ~60 reviewable lines; the optional harness-less re-exec smoke runs the real path on
+   the elevated CI runner. **Falsifier:** H fails on prompt/launch behaviour — the
+   Windows asset does not ship that tag (pre-committed).
+2. **Linux AppImage tooling on `ubuntu-24.04`** (linuxdeploy is an AppImage; FUSE may be
+   required). *Mitigation:* `APPIMAGE_EXTRACT_AND_RUN=1`; named remediation package
+   (`libfuse2t64`); pre-declared deb-only fallback. **Falsifier:** AppImage fails the
+   5-iteration cap even with the fallback — fallback ships, C30 amended.
+3. **ACL inheritance on the staging directory** (elevated writer, unelevated reader):
+   the user-owned temp dir's inherited ACEs should let the parent read the results; if a
+   hardened machine breaks inheritance, the graft reads nothing. *Mitigation:* H1's graft
+   step is exactly this check on a real machine; the failure mode is loud (results never
+   appear) and safe (nothing corrupts). **Falsifier:** H1 grafts nothing despite an
+   approved session — the elevated writer must set explicit ACLs (its own small
+   increment) before the Windows asset ships.
+4. **Privileged-image honesty** (the whole app binary runs elevated on Windows). Not a
+   defect — a stated trade the maintainer ruled for — but the review lanes should attack
+   the argv branch: is anything initialised before it? Can the webview be reached?
+   *Mitigation:* the source-order guard test (§3.7.5) and the no-command-surface
+   property stated in C30. **Falsifier:** any path from the serve branch to a Tauri
+   type.
+5. **Icon set** (NSIS wants `.ico`; deb wants sized PNGs). *Mitigation:* regenerate the
+   full set with `bunx tauri icon` in the same PR. **Falsifier:** bundler rejects the
+   generated set — fix the source image; cosmetic.
+6. **Windows step shells** (pwsh default vs bash idioms). *Mitigation:* `shell: bash` on
+   every Windows step. Immediate, visible, one-line fix.
+7. **7z cannot extract the NSIS payload** (handler drift). *Mitigation:* silent-install
+   fallback (`/S /D=`), which is stronger evidence anyway.
+8. **Asset-name collisions** in the release lane (the historical bug class).
+   *Mitigation:* matrix-derived exact count + duplicate-name guard (B4).
+9. **`crates/admin` lib+bin churn** — tests move with the code; a mechanical refactor
+   that changes the protocol would be caught by the moved tests themselves. Low.
 
-**Recommendation: BUILD**, one slice, all four legs, with the §5 fallback and §7
-acceptance rule committed with this document before any workflow run.
+## 9. BUILD — recommended, amended
+
+The premise survived verification; the rulings removed the one piece the original design
+treated as fixed (helper-everywhere) and replaced it with a mechanism the codebase was
+visibly prepared for (`Launch` seam, launcher-agnostic protocol, host-agnostic
+`AdminSession`, four-line `main`). The serve loop stays single-sourced; the only new
+`unsafe` is one Win32 call in a cage; the consent behaviour gets the C23-AC4 treatment
+(human, real dialog, written record) instead of a CI fiction. Verification is
+per-platform expected sets with a negative assertion that makes the ruling itself
+machine-enforced. **BUILD**, one slice, all four legs, Stage H as the Windows ship gate,
+with the §5 fallbacks and §7 acceptance rule committed with this document before any
+workflow run or hand test.
 
 ## 10. Open decisions for the maintainer
 
-1. **msi** — deferred (§5). Confirm or override; overriding adds the WiX lane to the
-   matrix and one asset to B1.
-2. **Next tag** — the pipeline change should prove itself via `workflow_dispatch` on the
-   PR branch (Stage A) and land before the next tag; confirm the next version is 0.2.0
-   (README/asset names embed the version).
-3. **Roadmap placement** — C30 is a claim, not a DaisyDisk-parity row; if you want it
-   numbered on the roadmap anyway, it slots as a new R row of its own, not inside parity
-   ordering.
-4. **The Measure button on Windows/Linux** — currently untested UI surface showing an
-   honest error; if you prefer it hidden until a launcher exists, that is a small frontend
-   gate better landed with §3.7.1 than never.
+1. **Who runs Stage H and when** — it needs a real Windows machine and a human; it gates
+   the Windows asset for 0.1.1 (partial-ship path if unavailable).
+2. **The optional re-exec smoke test** (§3.7.5, droppable-if-flaky) — keep or cut; it is
+   the only CI exercise of the real `ShellExecuteW` wrapper.
+3. **`win-elevate` as a crate vs a vetted third-party wrapper** — the design prefers the
+   mini-crate for review surface; if you accept a dependency instead, the semantic
+   requirement is prompt-then-return (not wait-for-exit), stated in §3.7.2.
+4. **Next tag** confirmed as **0.1.1** (asset names and the release body embed it).
+5. **Roadmap placement of C30** — a claim, not a DaisyDisk-parity row; number it only if
+   you want it on the roadmap, outside parity ordering.
