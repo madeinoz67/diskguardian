@@ -65,6 +65,11 @@ jobs:
         run: bun run stage:admin
 
       - name: Check the application compiles here too
+        # -D warnings, not merely warnings: a platform-specific import that no longer has a
+        # user on that platform is exactly how this lane earns its keep, and a green lane
+        # full of warnings teaches everyone to ignore it.
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo check -p diskguardian-app
 
   frontend:

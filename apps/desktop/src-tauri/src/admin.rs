@@ -23,7 +23,10 @@ use crate::state::AppState;
 use diskguardian_core::{NodeId, ViewNode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{self, Read};
+use std::io;
+// `Read` is a trait bound for the helper's stdout reads, which only exist on macOS.
+#[cfg(target_os = "macos")]
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
