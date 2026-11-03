@@ -233,7 +233,17 @@ jobs:
                 FAIL=1
                 # Same-named payload binary vs the reference: sizes, types, and dynamic
                 # entries. If patchelf rewrote the ELF, size and rpath tell on it.
-                cand="$(find "$dir" -type f -name "$bin*" | head -1)"
+                # Exact name first, then a prefix match that cannot be an icon. The
+                # previous glob picked diskguardian-app.png out of the deb's share/icons
+                # tree and dumped 21,603 lines of cmp noise against it, which is how the
+                # R-mutate m1 control died before reaching the AppImage arm.
+                # -print -quit instead of `| head -1`: find writing into a closed head is
+                # SIGPIPE, and under `set -o pipefail` that aborts the whole step.
+                cand="$(find "$dir" -type f -name "$bin" -print -quit)"
+                if [ -z "$cand" ]; then
+                  cand="$(find "$dir" -type f -name "$bin*" \
+                    ! -name '*.png' ! -name '*.ico' ! -name '*.svg' -print -quit)"
+                fi
                 if [ -n "$cand" ]; then
                   echo "  closest payload candidate: $cand"
                   echo "  payload size: $(stat -c%s "$cand") sha256: $(sha256sum "$cand" | cut -d' ' -f1)"
@@ -247,8 +257,12 @@ jobs:
                     DIFFS="$(cmp -l "$REF_DIR/$bin" "$cand" 2>/dev/null || true)"
                     COUNT="$(printf '%s' "$DIFFS" | grep -c . || true)"
                     echo "  total differing bytes vs reference: ${COUNT:-0}"
-                    printf '%s\n' "$DIFFS" | head -5
-                    FIRST="$(printf '%s\n' "$DIFFS" | head -1 | awk '{print $1}')"
+                    # Herestrings, not pipes: `printf | head` takes SIGPIPE when head
+                    # closes after its lines, and pipefail turns that into exit 141,
+                    # killing the step mid-diagnostic. This is what stopped R-mutate m1
+                    # from reaching the AppImage arm at all.
+                    head -5 <<<"$DIFFS"
+                    FIRST="$(head -1 <<<"$DIFFS" | awk '{print $1}')"
                     if [ -n "$FIRST" ] && command -v od >/dev/null; then
                       # Name the exact string the bundler touched: 128 bytes of
                       # context centred on the first differing byte, from both files,
