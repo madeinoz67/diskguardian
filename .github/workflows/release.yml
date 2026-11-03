@@ -315,15 +315,29 @@ jobs:
               esac
               typ="$(readelf -SW "$ref" | sed -E 's/^ *\[ *[0-9]+\] +//' | awk -v s="$sec" '$1 == s {print $2; exit}')"
               if [ "$typ" = "NOBITS" ]; then echo "section $sec: skipped (NOBITS — no file bytes to hash)"; continue; fi
+              # Remove both dumps BEFORE extracting. objcopy can exit 0 while
+              # writing nothing; the previous section's file would then be hashed
+              # a second time under the new name, and two different sections
+              # would "match". That is not hypothetical: iteration 4 printed
+              # .rodata and .shstrtab with identical reference hashes
+              # (0e40f15e… on the app, 53572043… on the admin), which real
+              # section content cannot produce. Existence after a deliberate
+              # rm is the only thing that proves a write happened; the exit
+              # code is not.
+              rm -f "$tmpd/ref.bin" "$tmpd/pay.bin"
               h_ref=""; h_pay=""
-              if objcopy --dump-section "$sec=$tmpd/ref.bin" "$ref" 2>/dev/null; then
+              if objcopy --dump-section "$sec=$tmpd/ref.bin" "$ref" 2>"$tmpd/ref.err" \
+                 && [ -f "$tmpd/ref.bin" ]; then
                 h_ref="$(sha256sum "$tmpd/ref.bin" | cut -d' ' -f1)"
               fi
-              if objcopy --dump-section "$sec=$tmpd/pay.bin" "$payload" 2>/dev/null; then
+              if objcopy --dump-section "$sec=$tmpd/pay.bin" "$payload" 2>"$tmpd/pay.err" \
+                 && [ -f "$tmpd/pay.bin" ]; then
                 h_pay="$(sha256sum "$tmpd/pay.bin" | cut -d' ' -f1)"
               fi
               if [ -z "$h_ref" ] || [ -z "$h_pay" ]; then
                 echo "MISS: cannot extract section $sec for comparison ($label)"
+                if [ -s "$tmpd/ref.err" ]; then sed 's/^/    ref objcopy: /' "$tmpd/ref.err"; fi
+                if [ -s "$tmpd/pay.err" ]; then sed 's/^/    pay objcopy: /' "$tmpd/pay.err"; fi
                 FAIL=1
                 continue
               fi
