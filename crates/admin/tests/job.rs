@@ -341,10 +341,18 @@ fn a_spent_deadline_reports_deadline_with_partial_results() {
 /// The review gate, made mechanical: the helper's whole capability list is read-job,
 /// walk-read-only, write-two-files, exit. If any removal, process-spawning or network
 /// call site ever appears in its source, this fails before a reviewer has to look.
+/// Since the lib+bin split (multi-platform release design §3.7.1) the protocol lives in
+/// `src/lib.rs` — shared with the Windows app binary's elevated serve branch — so the
+/// guard reads every source file the serve path can be built from, not just the
+/// sidecar's argv wrapper.
 #[test]
 fn helper_source_has_no_removal_process_or_network_callsites() {
-    let src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+    let mut src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
         .expect("read own source");
+    src.push_str(
+        &fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+            .expect("read own library source"),
+    );
     for needle in [
         "core::delete",
         "::delete",
