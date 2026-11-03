@@ -1,0 +1,35 @@
+[package]
+name = "diskguardian-win-elevate"
+description = "The one Win32 call behind Windows self-elevation: ShellExecuteW with the runas verb, kept in its own cage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+# The entire crate compiles to nothing off Windows; so does this edge.
+[target.'cfg(windows)'.dependencies]
+# Already in the dependency tree many times over via tauri's Windows stack; the direct
+# edge adds no crate. Types and signature verified against the 0.61.2 source.
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+# The harness-less re-exec smoke plays the serving child with the real serve loop and
+# reads the files it writes. Both arms exist only under cfg(windows), but a
+# platform-gated test gates its imports too: these must be present for the Windows
+# compile even though no macOS lane can catch their absence.
+diskguardian-admin = { path = "../admin" }
+serde_json.workspace = true
+tempfile = "3"
+
+# The re-exec smoke owns its main: it must tell "I am the parent driving the elevation"
+# from "I am the elevated child", which no #[test] harness can express. Pre-declared
+# droppable if it proves flaky (maintainer ruling 9, 2026-11-03).
+[[test]]
+name = "reexec"
+harness = false

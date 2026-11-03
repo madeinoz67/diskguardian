@@ -658,7 +658,9 @@ dependencies = [
 name = "diskguardian-app"
 version = "0.1.1"
 dependencies = [
+ "diskguardian-admin",
  "diskguardian-core",
+ "diskguardian-win-elevate",
  "libc",
  "objc2-foundation",
  "plist",
@@ -682,6 +684,16 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "trash",
+]
+
+[[package]]
+name = "diskguardian-win-elevate"
+version = "0.1.1"
+dependencies = [
+ "diskguardian-admin",
+ "serde_json",
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

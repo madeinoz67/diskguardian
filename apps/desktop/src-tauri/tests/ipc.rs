@@ -596,6 +596,73 @@ fn a_declined_dialog_is_a_typed_refusal_not_a_crash() {
     );
 }
 
+/// The Windows decline (multi-platform release design §3.7.2): a runas refusal
+/// surfaces as "the user cancelled the elevation prompt", and the refusal mapping —
+/// deliberately unchanged by the design — must word it as the exact sentence the
+/// macOS decline produces. Also pins what the decline costs: no authorisation spent
+/// (`admin_authorised` still false, so a retry may ask again) and the tree untouched.
+#[test]
+fn a_windows_shaped_decline_is_the_same_refusal_and_spends_no_session() {
+    let app = build();
+    let webview = webview(&app);
+    let (scan_id, root, _locked, _path) = seed_scan_with_locked(&app, "locked");
+    let before = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": &scan_id, "nodeId": root }),
+    )
+    .expect("view before");
+    let before_bytes = before[0]["bytes"].as_u64().expect("bytes");
+    inject_launcher(
+        &app,
+        Arc::new(|_dir: &Path| {
+            Ok(admin::LaunchOutcome {
+                success: false,
+                stderr: "the user cancelled the elevation prompt".to_string(),
+            })
+        }),
+    );
+
+    let result = call(
+        &webview,
+        "scan_restricted",
+        serde_json::json!({ "scanId": scan_id }),
+    );
+    assert!(result.is_err(), "a declined UAC prompt must be an error");
+    assert_eq!(
+        result.unwrap_err().as_str().unwrap_or_default(),
+        "Administrator access was declined — restricted areas stay unmeasured",
+        "byte-for-byte the macOS refusal sentence: one mapping, two platforms"
+    );
+
+    let authorised =
+        call(&webview, "admin_authorised", serde_json::json!({})).expect("admin_authorised");
+    assert_eq!(
+        authorised, false,
+        "a decline must not spend the session's one prompt"
+    );
+
+    let after = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": &scan_id, "nodeId": root }),
+    )
+    .expect("view after");
+    assert_eq!(
+        after[0]["bytes"].as_u64().expect("bytes"),
+        before_bytes,
+        "a declined pass changes nothing"
+    );
+    assert!(
+        after
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|n| n["name"] == "locked" && n["kind"] == "restricted"),
+        "the locked area is still drawn restricted, never zero"
+    );
+}
+
 #[test]
 fn a_failed_helper_reports_its_stderr() {
     let app = build();
