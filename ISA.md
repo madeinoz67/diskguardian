@@ -478,30 +478,40 @@ expressible.
 lost), and `tauri.conf.json` still ships `csp: null` — the hover-label injection is fixed, but CSP
 hardening is its own decision and was deliberately not folded in.
 
-### C29 — Hidden space is accounted, not implied  `[ ]`
-A scan whose root is a volume reports the volume's own used space, and the difference between it and
-the measured tree is one "Hidden space" node whose width is that residual — decomposed into other
-volumes of the same APFS container (measured), local snapshots (counted, never sized), protected
-areas (the tree's restricted roots, named), and a "still hidden" remainder that is named rather than
-distributed. macOS' purgeable figure is shown beside the breakdown as "up to N", never as a slice of
-the residual, because the system may free space the tree already counts. A volume scan walks only
-the scanned volume's device (the boot volume group counts as one), never other disks or snapshot
-mounts, and the mounts it excluded are listed. A negative residual is reported in words with the
-petal omitted, never shown as zero silently.
-**Probe:** `cargo test -p diskguardian-core` — the residual is placed exactly (anchor = tree ± K
-gives hidden = K; no anchor gives no node); an excluded prefix and a foreign `st_dev` subtree leave
-the tree and are listed, nothing zeroed. `cargo test -p diskguardian-app` — canned `diskutil` plist
-parses, including a malformed one which yields no decomposition rather than zeros; injected capacity
-probes (purgeable absent or negative → not reported); the IPC panel payload carries the "up to"
-wording and no snapshot size. `bun test` on the model — it cannot render a snapshot size, cannot show
-a missing decomposition as "none", and cannot swallow a negative-residual note.
+### C29 — The hidden residual is measured, and what cannot be measured is named  `[ ]`
+A scan whose root is a volume reports one "Hidden space" node whose width is that volume's used space
+minus the measured tree, computed at view time from a fresh anchor so it self-corrects after deletes,
+grafts and revalidates without ever entering the `Tree`. The walk stays on the scanned volume's device
+— the boot volume group counts as one — never entering another disk or a snapshot mount, and the
+mounts it excluded are listed. macOS' purgeable figure appears beside the residual as "up to N", never
+as a slice of it and never as free space, because it overlaps bytes the tree already counts. A
+negative residual is reported in words with the petal omitted, never silently zeroed; no anchor means
+no node.
+**Probe:** `cargo test -p diskguardian-core --test volume` — the residual is placed exactly (anchor =
+tree ± K gives hidden = K; no anchor gives no node), a foreign `st_dev` subtree and an excluded prefix
+leave the tree and are listed in `skipped_mounts`, and prefix matching is by component so excluding
+`…/skip` does not swallow `…/skipme`. `cargo test -p diskguardian-app --test ipc hidden_space` — the
+payload carries the anchor, the purgeable wording, and a held note in the backend's own words.
+`bun test` on the model — it cannot render a snapshot size, cannot show an absent decomposition as
+"none", and cannot swallow a negative-residual note.
 **Falsifier:** a hidden petal whose bytes are not `volume used − tree total` at the moment of
 projection; a purgeable figure presented as freed or as part of the residual; a volume scan that
 enters another disk or a snapshot mount; a skipped mount absent from the report; a per-snapshot size.
-**Design:** `.claude/designs/2026-11-02-hidden-space-design.md` (acceptance rule committed before any
-scan-side measurement). Forks defaulted rather than asked (2026-11-02): purgeable shown as an
-annotation, never sliced; `objc2-foundation` accepted because it is already in the tree; the two
-fixed macOS exclusion prefixes over a general mount-table rule.
+**Narrowed 2026-11-02, by the rule's own verdict.** The design committed an acceptance rule before any
+measurement: ship iff the identity tests pass, the reported used space agrees with `df` and `diskutil`
+within 1%, and the residual lands in a pre-committed band. The run passed every numeric arm — oracles
+0.00013% and 0.017%, purgeable matching Foundation exactly, skew 12 MB over 67 s — **but still-hidden
+was 92.3% of the total, past the rule's 80% line, and the external-volume tie-breaker could not run
+because that disk is the live Time Machine destination.** The rule said underpowered decides nothing,
+so the decomposition (other container volumes, snapshot count, named restricted roots, the still-hidden
+remainder) is **held**, and a backend-owned note says so on the panel rather than showing empty
+categories. R15 carries its reopen trigger. No threshold was moved after the data was seen.
+**Also fixed here, pre-existing:** the `/` walk entered an external backup volume and live snapshot
+mounts, so the "Macintosh HD" figure could include another disk's bytes.
+**Appearance not yet observed, and the claim stays open on it:** the terminal held a fullscreen space
+for the whole verification window, so the petal and the panel have not been looked at on the built
+app. The held note, the "up to" wording and the refusal to render an unmeasured category are pinned by
+tests, but rendering is not. One launch closes this.
 
 ## Test Strategy
 
@@ -610,6 +620,14 @@ increment opens.
 - **R10 — Real-time gauges**, Option folds purgeable into the bar.
 - **R11 — Lower**: cloud accounts, parallel multi-disk scanning, disk images, network
   volumes, Forget scan results.
+- **R15 — The hidden-space decomposition** (opened 2026-11-02, C29's held half). Other container
+  volumes, the snapshot count, the named restricted roots and the still-hidden remainder. Its
+  machinery is written and tested (`parse_containers`, `decompose_other_volumes`, `container_report`,
+  `examples/hidden_measure`), and nothing on the shipped path calls it. **Reopen trigger:** run
+  `cargo run --release -p diskguardian-app --example hidden_measure -- /Volumes/<external>` against a
+  second APFS volume while it is idle, and land the decomposition only if the cross-check brings the
+  still-hidden share under the rule's 80% line. Measured on the boot volume alone it was 92.3%, which
+  is the reason it is not shipped.
 - **R14 — Concurrent scans are served fairly, or refused** (opened 2026-11-02 from C13's
   narrowing; **half landed 2026-11-02**). A superseded scan is now asked to stop and, if it
   observes the request, returns `ScanError::Cancelled` with no tree — checked before the walk,
