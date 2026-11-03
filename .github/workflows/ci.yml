@@ -39,6 +39,34 @@ jobs:
       - name: Test
         run: cargo test -p diskguardian-core -- --nocapture
 
+      # The lanes above prove the ENGINE on three platforms; until now nothing built the
+      # application anywhere but macOS, so an app-crate platform break would have shipped
+      # unnoticed and only the release tag would find it. This compiles the real crate.
+      - name: Frontend toolchain
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf
+
+      - name: Build the frontend (the app crate embeds it at compile time)
+        working-directory: apps/desktop
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Stage the measurement helper for this host
+        working-directory: apps/desktop
+        run: bun run stage:admin
+
+      - name: Check the application compiles here too
+        run: cargo check -p diskguardian-app
+
   frontend:
     name: Sunburst (TypeScript)
     runs-on: ubuntu-latest
