@@ -8,7 +8,7 @@ import type { CleanupItem, FavouriteMarks, SnapshotReport, ViewNode, VolumeInfo 
 import { basename, gaugeFor, toneColor } from './overview'
 import { applyBranch, advance, findChildByName, partialView, startBranches } from './partial'
 import type { PartialBranch } from './partial'
-import { ADMIN_REFUSED_STATUS, adminStatus, isMacPlatform } from './admin'
+import { ADMIN_REFUSED_STATUS, adminStatus, hasAdminRunner } from './admin'
 import { duplicatesModel } from './duplicates'
 import type { DuplicateGroupModel } from './duplicates'
 import { purgeMessage, snapshotsModel } from './snapshots'
@@ -358,9 +358,10 @@ async function scanPath(path: string): Promise<void> {
         result.duration_ms / 1000
       ).toFixed(1)}s${restrictedNote}`,
     )
-    // The affordance appears only where a runner exists (macOS) and only when there
-    // is something to measure.
-    if (result.partial && isMacPlatform(navigator.userAgent)) {
+    // The affordance appears only where a runner exists (macOS and Windows) and only
+    // when there is something to measure. Gating on the OS name instead of on the
+    // runner is what hid the Windows elevation path from the shipped Windows build.
+    if (result.partial && hasAdminRunner(navigator.userAgent)) {
       // Already authorised in this run: measure straight away and do not offer a second
       // prompt the user has effectively already given.
       const authorised = await bridge.adminAuthorised().catch(() => false)

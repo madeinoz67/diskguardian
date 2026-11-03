@@ -17,10 +17,17 @@ export function adminStatus(recovered: number, stillRestricted: number): string 
 }
 
 /**
- * The affordance exists only where the runner exists. The user agent is the cheapest
- * honest detector for now; a proper platform command is deferred with the Linux and
- * Windows runners.
+ * The affordance exists only where the runner exists: macOS (osascript dialog) and
+ * Windows (a `runas` re-exec of the app binary, design §3.7.2). Linux has no runner yet
+ * and its launcher returns `Unsupported`, so offering the button there would promise a
+ * measurement that cannot happen.
+ *
+ * This is deliberately a question about runners, not about the OS name. It was
+ * `isMacPlatform` when macOS was the only runner; the Windows runner was added in Rust
+ * and this predicate was not widened with it, which left the shipped Windows build with
+ * no way to reach the elevation path at all. The user agent stays the cheapest honest
+ * detector until a platform command exists; the tests pin both platforms' real strings.
  */
-export function isMacPlatform(userAgent: string): boolean {
-  return /Mac/i.test(userAgent)
+export function hasAdminRunner(userAgent: string): boolean {
+  return /Macintosh|Windows NT/i.test(userAgent)
 }
