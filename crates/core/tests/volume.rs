@@ -198,16 +198,25 @@ fn the_residual_is_placed_exactly() {
         view.residual_bytes, k as i64,
         "the residual is reported to the caller, exactly"
     );
-    // The ring sums to the volume: root bytes == the sum of its children, hidden petal
-    // included. That is A6's proportionality stated over the whole circle.
+    // The ring plus the root's own blocks sums to the volume.
+    //
+    // The root directory's own allocation is part of the tree's total but has no petal:
+    // children sum to `total - own`. On APFS an empty directory occupies zero blocks, so
+    // this assertion passed on macOS while being wrong; on ext4 the same directory costs
+    // 4096 and the ring came up a block short. Written against the filesystem's own
+    // arithmetic, it holds on all three.
     let child_sum: u64 = view.nodes[0]
         .children
         .iter()
         .map(|&c| view.nodes[c as usize].bytes)
         .sum();
+    let root_own = tree.nodes[tree.root].own_bytes;
     assert_eq!(
-        child_sum, anchor.used_bytes,
-        "header and ring both agree with the anchor"
+        child_sum + root_own,
+        anchor.used_bytes,
+        "children, the hidden petal and the root's own blocks tile the anchor \
+         (for a positive residual; with a negative one there is no petal and the ring \
+         tiles the tree total instead)"
     );
 }
 
