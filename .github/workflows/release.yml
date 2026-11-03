@@ -68,7 +68,7 @@ jobs:
         working-directory: apps/desktop
         run: |
           set -euo pipefail
-          APP="$(ls -d src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app | head -1)"
+          APP="$(ls -d ../../target/${{ matrix.target }}/release/bundle/macos/*.app | head -1)"
           echo "bundle: $APP"
           test -x "$APP/Contents/MacOS/diskguardian-app" || { echo "app binary missing"; exit 1; }
           test -x "$APP/Contents/MacOS/diskguardian-admin" || { echo "admin helper missing from Contents/MacOS"; exit 1; }
@@ -82,16 +82,19 @@ jobs:
           esac
           echo "$ARCH_APP" | grep -qw "$EXPECT" || { echo "app is not $EXPECT"; exit 1; }
           echo "$ARCH_HELPER" | grep -qw "$EXPECT" || { echo "helper is not $EXPECT"; exit 1; }
-          DMG="$(ls src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)"
+          DMG="$(ls ../../target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)"
           test -s "$DMG" || { echo "no dmg produced"; exit 1; }
           echo "dmg: $DMG"
 
       - uses: actions/upload-artifact@v4
         with:
           name: diskguardian-${{ matrix.target }}
+          # This is a cargo workspace: the bundle lands in the ROOT target, not under
+          # apps/desktop/src-tauri. The first draft of this workflow pointed at the
+          # src-tauri path and the verify step failed on a bundle that had built fine.
           path: |
-            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            target/${{ matrix.target }}/release/bundle/macos/*.app
           if-no-files-found: error
 
   release:
