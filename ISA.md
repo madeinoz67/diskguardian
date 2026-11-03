@@ -75,9 +75,11 @@ In the rendered layout, each visible node produces exactly one arc, arcs tile th
 For every rendered arc, hit-testing a point inside it returns that node; hit-testing outside the ring returns none.
 **Falsifier:** property test over generated layouts.
 
-### C8 — Navigation works both directions  `[ ]`
+### C8 — Navigation works both directions  `[x]`
 Clicking a petal re-roots the view to that node; clicking the centre returns to the previous root, restoring it exactly.
 **Falsifier:** driving the app and observing an unchanged or wrong view.
+**Verified 2026-11-02 on the built app.** Clicking the `beta` petal re-rooted to `beta` at 8 MB with its two files and the breadcrumb following; clicking the centre restored `dg-fixture` at 12 MB with both petals, both totals and the breadcrumb as before. Frames read at `/tmp/dgv-4a.png` (inside `beta`) and `/tmp/dgv-4b.png` (restored).
+**Record corrected 2026-11-03:** the commit that closed this (`f26e37c`) said "C8 and C13 closed" while only C13's box was actually ticked and this section carried no evidence. The verification happened; the record did not follow it. Same class as the C27 stale-status note: a commit message asserting a state the file does not hold.
 
 ### C9 — Collector total is exact  `[x]`
 The collector's displayed total equals the sum of allocated bytes of the collected set, and collecting an ancestor together with one of its descendants counts the child once.
