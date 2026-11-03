@@ -144,8 +144,13 @@ jobs:
             it never deletes.
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" out/* --clobber
+          # --repo on every call: this job never checks out, so gh has no git context to
+          # infer the repository from. Without it gh fails with "not a git repository"
+          # after the artifacts were already collected.
+          REPO="${{ github.repository }}"
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --repo "$REPO" --clobber
           else
-            gh release create "$TAG" out/* --draft --title "DiskGuardian $TAG" --notes "$NOTES"
+            gh release create "$TAG" out/* --repo "$REPO" --draft \
+              --title "DiskGuardian $TAG" --notes "$NOTES"
           fi
