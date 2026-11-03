@@ -90,7 +90,9 @@ fn main() {
 }
 "#;
 
-    let launch = doctored.find("diskguardian_app::run()").expect("launch present");
+    let launch = doctored
+        .find("diskguardian_app::run()")
+        .expect("launch present");
 
     // The defect, recorded executably: the first-occurrence search this guard used is
     // fooled by the comment, so the ordering assertion would have passed.
