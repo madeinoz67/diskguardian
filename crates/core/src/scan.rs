@@ -26,7 +26,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-#[cfg(unix)]
 use std::sync::Mutex;
 use std::time::Instant;
 
