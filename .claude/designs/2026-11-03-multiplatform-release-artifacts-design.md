@@ -783,3 +783,32 @@ triple-naming claim names the single-file artifacts as the triple-named set with
 two dmg names as non-colliding bundler names — in ISA and the README. The 1,000,000-byte
 per-asset floor (§7 B2) moves from prose to an executable assertion in the release
 lane's collect step, at the pre-committed value.
+
+## Amendment 2 addendum — the section check's first green was partly false (maintainer catch)
+
+Iteration 4 printed `.rodata` and `.shstrtab` with IDENTICAL reference hashes on both
+binaries (`0e40f15e…` app, `53572043…` admin) — real section content cannot do that. The
+maintainer caught it by reading the printed hashes, which is exactly why the rule
+demands prints over ticks.
+
+Mechanism, reproduced locally on the iteration-4 deb binary: `objcopy --dump-section`
+refuses `.shstrtab` outright — "can't dump section … it does not exist: file in wrong
+format" — **with exit code 0**. Nothing is written; the previous section's dump file is
+still on disk; the stale bytes are hashed again under the new name; stale-vs-stale
+"matches". Every other section printed real bytes (`.rodata`'s print was verified
+genuine), so exactly one line per binary was false.
+
+Fixes, layered: (1) remove both dump files before every extraction and refuse to hash
+what was not freshly written; (2) when objcopy declines, read the section's file bytes
+by readelf's own offset and size; (3) that fallback must force base-16 — readelf prints
+bare hex, and a leading zero makes bash read it as octal, so hex letters abort the
+arithmetic while all-octal-digit values silently address the wrong window; (4) an
+exact-size assertion, not existence: `head` creates the output file even on a failed
+read, so only the byte count proves the window was real. Verified locally: the true
+`.shstrtab` of the iteration-4 binaries is `ceb97862…` on BOTH (identical section-name
+sets), nothing like the stale prints; both R-mutate sites still fail the check.
+
+`.shstrtab` is NOT exempt. patchelf can rewrite the section-header string table, so
+whether it genuinely matches across the AppImage transformation is exactly what the
+next dispatch must show; if it genuinely differs, the exemption needs that evidence and
+the maintainer's ruling, not a silent addition.

@@ -286,22 +286,33 @@ jobs:
           # this fallback existed, .shstrtab silently reused .rodata's bytes and
           # "matched".
           section_hash() { # $1 file, $2 section, $3 scratch path; prints sha256
-            local f="$1" sec="$2" out="$3" cols off size
+            local f="$1" sec="$2" out="$3" cols off size got
             rm -f "$out"
             if objcopy --dump-section "$sec=$out" "$f" 2>/dev/null && [ -f "$out" ]; then
               sha256sum "$out" | cut -d' ' -f1
               return 0
             fi
+            # objcopy declined (on these binaries it refuses .shstrtab with exit
+            # code 0) — read the section's file bytes by readelf's own offset and
+            # size. Both are bare HEX: force base 16, because a leading zero makes
+            # bash read them as octal — hex letters then abort the arithmetic
+            # (loudly), and all-octal-digit values silently address the WRONG
+            # window, which would hash the same wrong bytes on both sides.
             cols="$(readelf -SW "$f" \
               | sed -E 's/^ *\[ *[0-9]+\] +//' \
               | awk -v s="$sec" '$1 == s {print $4, $5; exit}')"
             [ -n "$cols" ] || return 1
             off="${cols%% *}"
             size="${cols##* }"
-            case "$off$size" in *[!0-9]*) return 1 ;; esac
+            case "$off$size" in *[!0-9a-fA-F]*) return 1 ;; esac
             rm -f "$out"
-            tail -c "+$((off + 1))" "$f" | head -c "$size" > "$out"
-            [ -f "$out" ] || return 1
+            tail -c "+$((16#$off + 1))" "$f" | head -c "$((16#$size))" > "$out"
+            # Exact-size assertion, not existence: head creates the file even on a
+            # failed read, so only the byte count proves the window was real. A
+            # legitimately-empty section reads 0 bytes and hashes as the empty
+            # digest — evidence, not a skip.
+            got="$(stat -c%s "$out" 2>/dev/null || echo -1)"
+            [ "$got" = "$((16#$size))" ] || return 1
             sha256sum "$out" | cut -d' ' -f1
           }
 
