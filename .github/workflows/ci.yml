@@ -106,7 +106,9 @@ jobs:
       # claims the branch newly ticks, so the historical ticks are a backlog rather than a
       # blocker — `bun run scripts/check-isa-claims.ts ISA.md --all` audits those.
       - name: Claim record
-        working-directory: ..
+        # Absolute, not `..`: this job's default working directory is apps/desktop, so `..`
+        # is apps/ — the gate failed its first real run on exactly that.
+        working-directory: ${{ github.workspace }}
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
