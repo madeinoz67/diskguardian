@@ -274,9 +274,11 @@ across the petal and a struck-through name in the list, worth zero bytes and exc
 every ancestor's total. A rescan clears the ghosts.
 **Probe:** `cargo test` — `marking_a_node_missing_zeroes_it_and_updates_every_ancestor`
 (the node stays listed, is flagged, totals drop by exactly its subtree) and the IPC test
-`delete_strikes_the_node_through_and_shrinks_the_totals` (65536 bytes removed, not a
-directory's metadata size). The view gives a missing node a floor width of parent/200 so it
-stays visible while counting as zero.
+`delete_strikes_the_node_through_and_shrinks_the_totals` (the drop equals the subtree total
+the pre-delete scan measured — 65536 on APFS, 69632 on ext4, where the directory inode
+occupies a 4096 block — not a hardcoded constant, and not the directory's metadata size;
+the ext4 leg of this probe is CI's to run). The view gives a missing node a floor width of
+parent/200 so it stays visible while counting as zero.
 **Falsifier:** a deletion the user cannot see in the flower, or one that leaves the totals
 unchanged.
 
