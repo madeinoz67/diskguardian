@@ -526,12 +526,15 @@ Evidence: `docs/screenshot.png` (committed, and now the README's front-page imag
 
 ### C30 — Every supported platform ships an installable, structurally verified artifact; Windows measures restricted space by self-elevation  `[ ]`
 A tagged release attaches installable artifacts for macOS arm64 + x86_64 (`.dmg` + `.app`
-`.zip`), Windows x86_64 (NSIS `.exe`), and Linux x86_64 (`.deb` + `.AppImage`) — every
-artifact named with its target triple; each verified before upload to contain,
-byte-identical by SHA-256, exactly the binaries that platform ships (macOS/Linux: app +
-helper; Windows: app only, with no `diskguardian-admin*` file anywhere in the payload);
-and the release body naming what each platform's OS will warn about (Gatekeeper,
-SmartScreen, unsigned deb / AppImage FUSE).
+`.zip`), Windows x86_64 (NSIS `.exe`), and Linux x86_64 (`.deb` + `.AppImage`) — the
+single-file artifacts named with their full target triples (the `.app` zips, the
+Windows setup, the Linux deb and AppImage), while the two macOS dmgs keep the bundler's
+per-architecture names (`aarch64` / `x64`), which cannot collide with any other asset;
+each verified before upload to contain, byte-identical by SHA-256, exactly the binaries
+that platform ships (macOS/Linux: app + helper; Windows: app only, with no
+`diskguardian-admin*` file anywhere in the payload); and the release body naming what
+each platform's OS will warn about (Gatekeeper, SmartScreen, unsigned deb / AppImage
+FUSE).
 
 On Windows, measuring restricted areas re-executes the app elevated (UAC `runas`), the
 elevated instance serves the unchanged job/results protocol and exits with the session,
@@ -541,23 +544,24 @@ initialises no window, webview or command surface. That difference is stated, no
 hidden. A UAC prompt cannot be dismissed programmatically; an abandoned prompt parks
 that one pass until answered or the app exits, and no second prompt can stack.
 
-**Probe (CI arms, close on workflow evidence):** the release workflow's per-leg Verify
+**Probe:** (CI arms, close on workflow evidence) the release workflow's per-leg Verify
 steps — expected-set hash equality plus the Windows negative assertion, hashes printed
 in the job log — the release lane's exact-count and duplicate-name assertions, and the
 post-tag download re-hash; the injected-launch IPC tests (decline maps to the exact
 refusal sentence with the tree untouched; one launch per app session; the classifier),
 run headless in CI.
-**Probe (consent arms, open until the Stage H record lands):** one real UAC prompt per
+**Probe:** (consent arms, open until the Stage H record lands) one real UAC prompt per
 app session — not one per scan — seen and photographed by a human on real Windows;
 decline shows the refusal banner and changes nothing; the elevated instance grafts
 measured petals; it is gone within its 30-second heartbeat budget after the parent is
 force-killed. GitHub's Windows runners are already elevated, so the consent prompt
 never fires there; these arms cannot close on CI evidence and do not pretend to.
 **Falsifier:** any shipped platform artifact whose payload lacks a binary in its
-expected set (or, on Windows, contains one outside it) by hash; any asset named without
-its triple; a tag whose draft release carries fewer assets than the matrix produces; a
-release body omitting a platform's warning; a second UAC prompt for a second pass in
-one app session; an elevated instance still alive past its budgets after the parent dies.
+expected set (or, on Windows, contains one outside it) by hash; any single-file asset
+named without its full triple, or a dmg name colliding with another asset; a tag whose
+draft release carries fewer assets than the matrix produces; a release body omitting a
+platform's warning; a second UAC prompt for a second pass in one app session; an
+elevated instance still alive past its budgets after the parent dies.
 
 **Status:** opens `[ ]`. The CI arms close when the 0.1.1 tag is audited; the consent
 arms stay open until the Stage H hand-test record exists, even if the artifact has
@@ -722,6 +726,75 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-03 — Multi-platform release, Stage A attempt 2 of a pre-committed 5: **the same two
+  legs failed, for two new reasons**, and the adversary lane returned a HIGH that outranks both.
+  Windows: `E0308` twice at `admin.rs:637` and `:650` — the launcher returned `ElevateOutcome`
+  where the seam wants `LaunchOutcome`, two distinct structs with identical fields, so the mapping
+  the crate's own doc comment promised had never been written. Fixed by mapping once at the seam.
+  It cannot be proven on this machine (it is `cfg(windows)` code) and is not claimed to be; the
+  Windows CI leg is the proof, which is the same standing this increment already gave the Windows
+  compile. **Linux: the hypothesis from attempt 1 is confirmed.** The instrumentation printed the
+  reference `diskguardian-app` with no RUNPATH, the AppImage payload carrying
+  `RUNPATH: [$ORIGIN/../lib]`, and `diskguardian-admin` matching its reference **byte-for-byte** in
+  the deb. Byte-identity is therefore unachievable for the app binary on Linux, so per the
+  pre-committed rule the correction goes to the design and C30 rather than to a looser check.
+  One thing is *not* explained and is recorded as unknown rather than smoothed over: the **deb**
+  payload differs at an identical size (7292936) with no RUNPATH either, so the rpath story covers
+  the AppImage and does not yet cover the deb. Designer lane opened for that; C30's Linux clause
+  still says "byte-identical by SHA-256" and is known false until it lands.
+  **Adversary REFUTE (537b01e..2178102): the A1 privileged-image claim survives**, after 23
+  classifier shapes executed against a vendored copy, an executed empty-argv `execve`, and the
+  elevation cage read against the windows-sys source. One HIGH and three LOWs came back.
+  **F1 HIGH, folded.** The Windows elevation path was **unreachable from the shipped UI**:
+  `main.ts:363` gated the affordance on `isMacPlatform(navigator.userAgent)` — `/Mac/i`, written in
+  the macOS-only era — and this branch added the Windows runner in Rust while touching **zero**
+  frontend files. On the 0.1.1 Windows artifact a partial scan never rendered Measure, so
+  `scan_restricted` was never invoked, no UAC prompt could fire, and the classifier, the pre-Tauri
+  branch, the win-elevate cage and the NSIS negative assertion were all dead code in the product,
+  while the README and C30 described that behaviour as shipping. No CI arm could see it: the ipc
+  tests drive the Rust command directly and no Windows UI test exists. Fixed by replacing the
+  OS-name question with the runner question, `hasAdminRunner` (macOS or Windows; Linux still has no
+  runner and must not offer the button). RED, quoted: `SyntaxError: Export named 'hasAdminRunner'
+  not found in module .../src/admin.ts` (0 pass, 1 fail). GREEN: 65 pass, 0 fail, tsc exit 0.
+  **F2 LOW, folded.** `tests/serve_order.rs` located the dispatch with
+  `source.find("admin_serve_mode")` — first occurrence, comments included — so a comment above
+  `run()` that merely named the function satisfied the ordering assertion while the dispatch sat
+  below the launch, and an elevated copy would have opened the full Tauri app with the guard green.
+  The lookup is now comment-blind and requires a call; a second test pins the doctored shape and
+  asserts the naive search *is* fooled, so the fix is proven to discriminate rather than asserted
+  to. GREEN: 26 lib, 47 ipc, 2 serve_order, 1 crate_names, clippy clean.
+  **Row-call, not folded:** F3 the admin audit log hardcodes `$HOME/Library/Logs/DiskGuardian` on
+  every platform (on Windows `HOME` is usually unset, so that record silently does not exist);
+  F4 `ShellExecuteW` returns after consent, so a child that dies before readiness makes a user who
+  just approved UAC wait the full 1020 s bound, and the staging path is quoted rather than escaped;
+  F5 C30's liveness wording says "0700 staging directory", which is the macOS mechanism, while
+  Windows exclusivity is `%TEMP%`'s inherited profile ACLs.
+  Worth keeping: this PR is the **first Windows gate this branch ever had** — pushes without a PR
+  trigger no workflow — and the lane that would have caught F1's compile class is the PR CI lane.
+
+- 2026-11-03 — Multi-platform release, Stage A attempt 1 of a pre-committed 5: **two of four legs
+  failed**. macOS arm64 and x86_64 passed, including the new hash verification. Windows failed to
+  build — `E0433: cannot find module or crate win_elevate` at `admin.rs:633`, because the package is
+  named `diskguardian-win-elevate` and exposes `diskguardian_win_elevate`; the call sits behind
+  `#[cfg(target_os = "windows")]`, so every macOS gate is genuinely green and blind to it. Linux
+  built its deb, extracted it, and then matched no payload file to the reference hash; the cause is
+  **not yet known** and the leading hypothesis (the bundler's `patchelf` pass rewriting the ELF) would
+  make the design's byte-identity premise wrong for Linux rather than the workflow wrong. Instrumented
+  before the rule is touched, per the pre-committed rule.
+  Two findings that outlive this attempt. **`ci.yml` triggers on `push` to `main` and on
+  `pull_request` only**, so a branch push with no PR runs no gate at all — that is how a Windows
+  compile break reached the release lane unseen, and an early draft PR is now part of the loop.
+  **The Gortex daemon served the primary checkout's bytes for this worktree** (it returned an `ISA.md`
+  at `progress: 24/29` with no C30 while this file says 27/30), so any read through Gortex on a
+  non-primary worktree is `main`'s content; use `git` and native reads there.
+  Review lanes on the built branch: governance returned FIX FIRST — C30's evidence lines begin
+  `**Probe (…):**` and `check-isa-claims.ts` accepts only `**Probe:**`, so ticking C30 at the 0.1.1
+  audit would fail the gate deterministically; and "every artifact named with its target triple" is
+  false of the two dmgs, which keep the bundler's architecture names, so C30's own falsifier catches
+  its own release. Code review found one blocking defect (the same Windows break) and re-proved the
+  macOS hash check byte-identical against a real bundle locally. Adversary still out. C30 stays open,
+  progress unchanged at 27/30.
 
 - 2026-11-02 — Favourite folders shipped (C28), and the first increment run end to end under the
   new `increment` skill. What landed: a Rust-owned JSON store in the app data directory, star from a
