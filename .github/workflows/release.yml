@@ -89,11 +89,18 @@ jobs:
 
       # APPIMAGE_EXTRACT_AND_RUN makes the bundler's linuxdeploy (itself an AppImage)
       # run without FUSE on the runner; a no-op on the other legs.
+      #
+      # --no-binary-patching (design Amendment 2, maintainer ruling): Tauri rewrites a
+      # 3-byte bundle-type slot (__TAURI_BUNDLE_TYPE_VAR_UNK -> _DEB/_NSS/...) in the
+      # main binary per format — attempt 3 proved it by byte dump — which would make the
+      # deb/NSIS payloads differ from the cargo build products by construction. The flag
+      # disables that rewrite; its only documented cost is per-bundle-type updater
+      # support, and this app ships no updater. A no-op for the macOS-native bundles.
       - name: Build the bundle
         working-directory: apps/desktop
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
-        run: bunx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        run: bunx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-binary-patching
 
       # ── Verification, per platform ─────────────────────────────────────────────
       # The rule each leg enforces (design §3.3): the packaged payload contains, by
@@ -259,11 +266,84 @@ jobs:
               fi
             done
           }
+          # The AppImage arm (design Amendment 2 #3): both binaries are rpath-rewritten
+          # by linuxdeploy, so byte-identity is unattainable by construction; the
+          # verdict is ELF-content equality — same machine (asserted to be this leg's
+          # architecture, since hash equality no longer carries it), same build-id
+          # (necessary, not sufficient: it survives post-link mutation), same
+          # interpreter, same DT_NEEDED set, RUNPATH exactly $ORIGIN/../lib, same
+          # section names, and every section's content hash equal except the
+          # bundler-owned .dynstr/.dynamic. NOBITS sections have no file bytes. R-mutate
+          # for this arm: one byte flipped in the reference's .text, one in .rodata —
+          # both must fail here. Residual blind spot, stated: bytes outside any section
+          # are undetectable by any content check.
+          check_appimage_binary() {
+            local ref="$1" payload="$2" label="$3"
+            echo "── AppImage ELF-content check: $label ($payload) ──"
+            local m_ref m_pay b_ref b_pay i_ref i_pay n_ref n_pay r_pay s_ref s_pay
+            m_ref="$(readelf -h "$ref" | sed -n 's/^ *Machine: *//p')"
+            m_pay="$(readelf -h "$payload" | sed -n 's/^ *Machine: *//p')"
+            echo "machine: reference='$m_ref' payload='$m_pay'"
+            { [ -n "$m_ref" ] && [ "$m_ref" = "$m_pay" ]; } || { echo "MISS: machine differs for the $label"; FAIL=1; }
+            [ "$m_pay" = "Advanced Micro Devices X86-64" ] || { echo "MISS: the $label is not x86-64 (leg target ${{ matrix.target }})"; FAIL=1; }
+            b_ref="$(readelf -n "$ref" | sed -n 's/^ *Build ID: *//p')"
+            b_pay="$(readelf -n "$payload" | sed -n 's/^ *Build ID: *//p')"
+            echo "build-id: reference=$b_ref payload=$b_pay"
+            { [ -n "$b_ref" ] && [ "$b_ref" = "$b_pay" ]; } || { echo "MISS: build-id differs for the $label"; FAIL=1; }
+            i_ref="$(readelf -l "$ref" | sed -n 's/.*Requesting program interpreter: //p' | tr -d ']')"
+            i_pay="$(readelf -l "$payload" | sed -n 's/.*Requesting program interpreter: //p' | tr -d ']')"
+            echo "interpreter: reference='$i_ref' payload='$i_pay'"
+            [ "$i_ref" = "$i_pay" ] || { echo "MISS: interpreter differs for the $label"; FAIL=1; }
+            n_ref="$(readelf -d "$ref" | sed -n 's/^ *Shared library: *//p' | tr -d '[]"' | sort | tr '\n' ' ')"
+            n_pay="$(readelf -d "$payload" | sed -n 's/^ *Shared library: *//p' | tr -d '[]"' | sort | tr '\n' ' ')"
+            echo "DT_NEEDED: reference='$n_ref'"
+            echo "DT_NEEDED: payload='$n_pay'"
+            [ "$n_ref" = "$n_pay" ] || { echo "MISS: DT_NEEDED differs for the $label"; FAIL=1; }
+            r_pay="$(readelf -d "$payload" | grep -E 'RPATH|RUNPATH' | sed -E 's/.*\[//; s/\].*//')"
+            echo "RUNPATH: payload='$r_pay'"
+            [ "$r_pay" = '$ORIGIN/../lib' ] || { echo "MISS: RUNPATH is not \$ORIGIN/../lib for the $label"; FAIL=1; }
+            s_ref="$(readelf -SW "$ref" | sed -E 's/^ *\[ *[0-9]+\] +//' | awk '$1 ~ /^\./ {print $1}' | sort | tr '\n' ' ')"
+            s_pay="$(readelf -SW "$payload" | sed -E 's/^ *\[ *[0-9]+\] +//' | awk '$1 ~ /^\./ {print $1}' | sort | tr '\n' ' ')"
+            echo "sections: reference='$s_ref'"
+            echo "sections: payload='$s_pay'"
+            [ "$s_ref" = "$s_pay" ] || { echo "MISS: section-name set differs for the $label"; FAIL=1; }
+            local sec typ tmpd h_ref h_pay
+            tmpd="$(mktemp -d)"
+            for sec in $s_ref; do
+              case "$sec" in
+                .dynstr|.dynamic) echo "section $sec: skipped (bundler-owned, design Amendment 2)"; continue ;;
+              esac
+              typ="$(readelf -SW "$ref" | sed -E 's/^ *\[ *[0-9]+\] +//' | awk -v s="$sec" '$1 == s {print $2; exit}')"
+              if [ "$typ" = "NOBITS" ]; then echo "section $sec: skipped (NOBITS — no file bytes to hash)"; continue; fi
+              h_ref=""; h_pay=""
+              if objcopy --dump-section "$sec=$tmpd/ref.bin" "$ref" 2>/dev/null; then
+                h_ref="$(sha256sum "$tmpd/ref.bin" | cut -d' ' -f1)"
+              fi
+              if objcopy --dump-section "$sec=$tmpd/pay.bin" "$payload" 2>/dev/null; then
+                h_pay="$(sha256sum "$tmpd/pay.bin" | cut -d' ' -f1)"
+              fi
+              if [ -z "$h_ref" ] || [ -z "$h_pay" ]; then
+                echo "MISS: cannot extract section $sec for comparison ($label)"
+                FAIL=1
+                continue
+              fi
+              echo "section $sec sha256: reference=$h_ref payload=$h_pay"
+              [ "$h_ref" = "$h_pay" ] || { echo "MISS: section $sec differs for the $label"; FAIL=1; }
+            done
+            rm -rf "$tmpd"
+          }
           DEB="$(ls "$REF_DIR/bundle/deb/"*.deb | head -1)"
           if [ -s "$DEB" ]; then
             echo "deb: $DEB"
+            # Asset-level hash for Stage B, which runs on macOS and cannot
+            # dpkg-deb -x: this printed line is what its download re-hash
+            # compares against (design Amendment 2 #5).
+            echo "asset sha256 (.deb): $(sha256sum "$DEB" | cut -d' ' -f1)"
             rm -rf debx && mkdir debx
             if dpkg-deb -x "$DEB" debx; then
+              # Unchanged by Amendment 2: with --no-binary-patching the deb's
+              # binaries are the cargo build products, so plain hash equality
+              # is the check.
               check_dir debx ".deb payload"
             else
               echo "MISS: dpkg-deb -x failed on $DEB"
@@ -276,11 +356,20 @@ jobs:
           APPIMG="$(ls "$REF_DIR/bundle/appimage/"*.AppImage | head -1)"
           if [ -s "$APPIMG" ]; then
             echo "appimage: $APPIMG"
+            echo "asset sha256 (.AppImage): $(sha256sum "$APPIMG" | cut -d' ' -f1)"
             APPIMG_ABS="$(cd "$(dirname "$APPIMG")" && pwd)/$(basename "$APPIMG")"
             rm -rf appx && mkdir appx
             # Type-2 extraction needs no FUSE.
             if (cd appx && "$APPIMG_ABS" --appimage-extract >/dev/null); then
-              check_dir appx/squashfs-root "AppImage payload"
+              # The enumeration stays (Amendment 2 #7 — it is the evidence trail);
+              # the verdicts are the section-wise checks, because linuxdeploy
+              # rewrites BOTH binaries here.
+              echo "── AppImage payload: every file, with size and sha256 ──"
+              while IFS= read -r -d '' f; do
+                echo "AppImage payload file: $f size: $(stat -c%s "$f") sha256: $(sha256sum "$f" | cut -d' ' -f1)"
+              done < <(find appx/squashfs-root -type f -print0)
+              check_appimage_binary "$REF_DIR/diskguardian-app" "appx/squashfs-root/usr/bin/diskguardian-app" "app binary"
+              check_appimage_binary "$REF_DIR/diskguardian-admin" "appx/squashfs-root/usr/bin/diskguardian-admin" "admin sidecar"
             else
               echo "MISS: --appimage-extract failed on $APPIMG"
               FAIL=1
@@ -360,6 +449,14 @@ jobs:
           [ "$count" -eq "$EXPECTED" ] || { echo "expected exactly $EXPECTED assets"; exit 1; }
           dups="$(ls out | sort | uniq -d)"
           [ -z "$dups" ] || { echo "duplicate asset names: $dups"; exit 1; }
+          # Design §7 B2, now executable rather than carried by a human reading
+          # ls -la: every asset must be at least 1,000,000 bytes (the pre-committed
+          # floor, 3x under the smallest known-good v0.1.0 asset at 2.96 MB).
+          while IFS= read -r -d '' f; do
+            size="$(stat -f%z "$f")"
+            echo "asset $f size: $size"
+            [ "$size" -ge 1000000 ] || { echo "asset is below the 1,000,000-byte floor"; exit 1; }
+          done < <(find out -type f -print0)
 
       - name: Create or update the draft release
         env:
