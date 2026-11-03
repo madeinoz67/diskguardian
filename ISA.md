@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 24/29
+progress: 27/30
 iteration: 1
 created: 2026-10-30
 ---
@@ -25,7 +25,6 @@ Open it and the disk draws itself as a flower: every folder a coloured petal, ev
 - APFS local snapshot discovery and purge.
 - Disk image (.dmg) mounting and scanning.
 - Network volumes.
-- Windows and Linux builds. The code is written portable and cross-platform, but only macOS is tested and shipped at v0.1.
 - APFS clone detection (`ATTR_CMNEXT_CLONEPARENT`). Hard links are deduplicated; clones are not, yet.
 
 ## Anti-claims (what must NOT be true)
@@ -345,6 +344,12 @@ and gone by +8 s, so the heartbeat mechanism does its job without a test harness
 directory survived the SIGTERM (a `TempDir` drop does not run on an abrupt kill), so on this path
 the heartbeat is the mechanism that actually ends the session — worth knowing, because the design
 lists three and only one of them fired.
+**Platform note (2026-11-03):** the helper and its protocol ship unchanged in the macOS
+and Linux artifacts. Windows ships no helper: the app re-execs itself elevated (UAC)
+and the elevated instance serves the same protocol from the same code (`crates/admin`
+lib). On Linux the Measure button reports "not available on Linux yet" and restricted
+petals stay restricted (A3, A5 hold). Per-platform launchers for Linux are deferred
+with reopen triggers in the multi-platform release design.
 
 ### C24 — Duplicate groups are content-identical, never a space promise  `[x]`
 A duplicate pass over a finished scan (never during one) groups only files whose whole-file
@@ -519,6 +524,45 @@ figure — much of it is space the scan already counts", and the nine excluded m
 Evidence: `docs/screenshot.png` (committed, and now the README's front-page image),
 `/tmp/dg-shot-panel.png` for the panel.
 
+### C30 — Every supported platform ships an installable, structurally verified artifact; Windows measures restricted space by self-elevation  `[ ]`
+A tagged release attaches installable artifacts for macOS arm64 + x86_64 (`.dmg` + `.app`
+`.zip`), Windows x86_64 (NSIS `.exe`), and Linux x86_64 (`.deb` + `.AppImage`) — every
+artifact named with its target triple; each verified before upload to contain,
+byte-identical by SHA-256, exactly the binaries that platform ships (macOS/Linux: app +
+helper; Windows: app only, with no `diskguardian-admin*` file anywhere in the payload);
+and the release body naming what each platform's OS will warn about (Gatekeeper,
+SmartScreen, unsigned deb / AppImage FUSE).
+
+On Windows, measuring restricted areas re-executes the app elevated (UAC `runas`), the
+elevated instance serves the unchanged job/results protocol and exits with the session,
+and — unlike macOS, whose privileged process is a measurement-only helper — the
+privileged process is the app binary itself, gated by a pre-Tauri argv branch that
+initialises no window, webview or command surface. That difference is stated, not
+hidden. A UAC prompt cannot be dismissed programmatically; an abandoned prompt parks
+that one pass until answered or the app exits, and no second prompt can stack.
+
+**Probe (CI arms, close on workflow evidence):** the release workflow's per-leg Verify
+steps — expected-set hash equality plus the Windows negative assertion, hashes printed
+in the job log — the release lane's exact-count and duplicate-name assertions, and the
+post-tag download re-hash; the injected-launch IPC tests (decline maps to the exact
+refusal sentence with the tree untouched; one launch per app session; the classifier),
+run headless in CI.
+**Probe (consent arms, open until the Stage H record lands):** one real UAC prompt per
+app session — not one per scan — seen and photographed by a human on real Windows;
+decline shows the refusal banner and changes nothing; the elevated instance grafts
+measured petals; it is gone within its 30-second heartbeat budget after the parent is
+force-killed. GitHub's Windows runners are already elevated, so the consent prompt
+never fires there; these arms cannot close on CI evidence and do not pretend to.
+**Falsifier:** any shipped platform artifact whose payload lacks a binary in its
+expected set (or, on Windows, contains one outside it) by hash; any asset named without
+its triple; a tag whose draft release carries fewer assets than the matrix produces; a
+release body omitting a platform's warning; a second UAC prompt for a second pass in
+one app session; an elevated instance still alive past its budgets after the parent dies.
+
+**Status:** opens `[ ]`. The CI arms close when the 0.1.1 tag is audited; the consent
+arms stay open until the Stage H hand-test record exists, even if the artifact has
+shipped in the meantime.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -594,6 +638,20 @@ Evidence: `docs/screenshot.png` (committed, and now the README's front-page imag
   template whose only interpolations are two app-generated, charset-asserted paths, so a
   folder named to look like shell syntax is inert.
 - **Narrow deletion guard** (2026-10-30, from a failing test that was right). Protecting `/private` and `/usr` wholesale refused the user's own temp directory (through the `/tmp` symlink) and every Homebrew cache. The guard now names the system's own trees, and a second test pins the narrow behaviour so a future "fix" cannot re-widen it.
+- **Windows elevation is self-elevation through the existing launcher seam** (2026-11-03,
+  maintainer ruling). The app re-execs itself with `runas`; the elevated instance takes a
+  pre-Tauri argv branch and serves the unchanged job/results protocol. Accepted trade,
+  stated in C30: the Windows privileged image is the whole app binary, not a
+  measurement-only helper; the argv branch that selects serving constructs no window,
+  webview or command surface, so no deletion code path is reachable elevated. The single
+  `ShellExecuteW` lives in a ~60-line windows-gated crate (`crates/win-elevate`) so
+  `crates/admin` keeps `unsafe_code = "forbid"` and the app crate gains no `unsafe`.
+- **Release artifacts are hash-verified against the binaries cargo built for the
+  triple, against per-platform expected sets** (2026-11-03). Presence-by-name is what a
+  bundler promises; content-identity is what a user installs. The hash check also
+  proves architecture for free and survives bundler renaming; the per-platform set plus
+  the Windows negative assertion make "what ships" a decision the config makes and the
+  pipeline enforces.
 
 ## Roadmap — DaisyDisk parity (opened 2026-11-02)
 
