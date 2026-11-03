@@ -846,7 +846,10 @@ In scope eventually, too dim to state as claims today:
   compile break reached the release lane unseen, and an early draft PR is now part of the loop.
   **The Gortex daemon served the primary checkout's bytes for this worktree** (it returned an `ISA.md`
   at `progress: 24/29` with no C30 while this file says 27/30), so any read through Gortex on a
-  non-primary worktree is `main`'s content; use `git` and native reads there.
+  non-primary worktree is `main`'s content; use `git` and native reads there. *(The counter was
+  separately repaired from a stale 24/29 to 27/30 with no claim ticked in that range: the base was
+  already three ahead of its stated count, which is why the stale read was plausible rather than
+  obviously wrong.)*
   Review lanes on the built branch: governance returned FIX FIRST — C30's evidence lines begin
   `**Probe (…):**` and `check-isa-claims.ts` accepts only `**Probe:**`, so ticking C30 at the 0.1.1
   audit would fail the gate deterministically; and "every artifact named with its target triple" is
