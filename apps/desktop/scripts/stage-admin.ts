@@ -24,20 +24,22 @@ const host = (await $`rustc -vV`.text()).match(/host: (\S+)/)?.[1]
 if (!host) throw new Error('rustc -vV did not report a host triple; is a Rust toolchain installed?')
 
 const triple = target || host
-// Windows cargo emits diskguardian-admin.exe; the bundler still wants the
-// target-triple-suffixed name without the extension.
+// Windows cargo emits diskguardian-admin.exe, and tauri's externalBin looks for the
+// target-suffixed name WITH the extension intact: it resolved
+// `binaries\diskguardian-admin-x86_64-pc-windows-msvc.exe` and refused the build when
+// staging had stripped it. The suffix is appended after the triple, not instead of it.
 const exe = triple.includes('windows') ? '.exe' : ''
 
 // From apps/desktop, where bun run executes this script.
 if (triple === host) {
   await $`cargo build -p diskguardian-admin --release --locked`
   await $`mkdir -p src-tauri/binaries`
-  await $`cp ../../target/release/diskguardian-admin${exe} src-tauri/binaries/diskguardian-admin-${triple}`
+  await $`cp ../../target/release/diskguardian-admin${exe} src-tauri/binaries/diskguardian-admin-${triple}${exe}`
 } else {
   // A cross build lands under target/<triple>/release, not target/release.
   await $`cargo build -p diskguardian-admin --release --locked --target ${triple}`
   await $`mkdir -p src-tauri/binaries`
-  await $`cp ../../target/${triple}/release/diskguardian-admin${exe} src-tauri/binaries/diskguardian-admin-${triple}`
+  await $`cp ../../target/${triple}/release/diskguardian-admin${exe} src-tauri/binaries/diskguardian-admin-${triple}${exe}`
 }
 
 console.log(`staged diskguardian-admin for ${triple}`)
