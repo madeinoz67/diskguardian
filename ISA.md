@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 23/29
+progress: 24/29
 iteration: 1
 created: 2026-10-30
 ---
@@ -478,7 +478,7 @@ expressible.
 lost), and `tauri.conf.json` still ships `csp: null` — the hover-label injection is fixed, but CSP
 hardening is its own decision and was deliberately not folded in.
 
-### C29 — The hidden residual is measured, and what cannot be measured is named  `[ ]`
+### C29 — The hidden residual is measured, and what cannot be measured is named  `[x]`
 A scan whose root is a volume reports one "Hidden space" node whose width is that volume's used space
 minus the measured tree, computed at view time from a fresh anchor so it self-corrects after deletes,
 grafts and revalidates without ever entering the `Tree`. The walk stays on the scanned volume's device
@@ -508,10 +508,14 @@ remainder) is **held**, and a backend-owned note says so on the panel rather tha
 categories. R15 carries its reopen trigger. No threshold was moved after the data was seen.
 **Also fixed here, pre-existing:** the `/` walk entered an external backup volume and live snapshot
 mounts, so the "Macintosh HD" figure could include another disk's bytes.
-**Appearance not yet observed, and the claim stays open on it:** the terminal held a fullscreen space
-for the whole verification window, so the petal and the panel have not been looked at on the built
-app. The held note, the "up to" wording and the refusal to render an unmeasured category are pinned by
-tests, but rendering is not. One launch closes this.
+**Appearance observed 2026-11-03 on the built app.** A boot-volume scan drew `/` at 1.6 TB with a
+purple **Hidden space** petal at 210 GB between Users and Applications, and the same figure in the
+contents column; clicking it opened a panel reading "Hidden space · 210 GB of 1.6 TB used", the held
+breakdown note in the backend's own words ("no category of the hidden figure is shown — not as a
+figure, and not as zero"), purgeable as "macOS can free up to 196 GB ... Not part of the hidden
+figure — much of it is space the scan already counts", and the nine excluded mounts listed by path.
+Evidence: `docs/screenshot.png` (committed, and now the README's front-page image),
+`/tmp/dg-shot-panel.png` for the panel.
 
 ## Test Strategy
 
