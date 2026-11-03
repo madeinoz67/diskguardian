@@ -8,7 +8,15 @@ not need into the collector, and delete it. Open source, written in Rust, macOS-
 built to run anywhere the scanning engine runs.
 
 <p align="center">
-  <em>One glance: the space is in Library and Archive. One drag: they are in the collector.</em>
+  <img src="docs/screenshot.png" width="880"
+       alt="DiskGuardian showing a 1.6 TB startup volume as a sunburst: a large Users
+            petal at 1.2 TB, a purple Hidden space petal at 210 GB, and Applications at
+            75.5 GB, with the same figures listed in the contents column.">
+</p>
+
+<p align="center">
+  <em>One glance: 1.2 TB is in Users, and 210 GB is space no scanner could see. One drag:
+  it is in the collector.</em>
 </p>
 
 ## Why another disk cleaner
