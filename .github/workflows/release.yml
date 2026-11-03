@@ -116,11 +116,16 @@ jobs:
           # `find`, not a `**` glob: shell globstar is off by default and a silent
           # no-match here would upload nothing and still succeed.
           find artifacts -name '*.dmg' -type f -exec cp {} out/ \;
+          # The architecture comes from the artifact directory (diskguardian-<triple>),
+          # NOT from the immediate parent: upload-artifact preserves the workspace path, so
+          # the parent is always "macos" and both architectures wrote the same filename —
+          # the second silently overwrote the first, shipping one arch's app zip as both.
           find artifacts -name '*.app' -type d -prune | while read -r app; do
             name="$(basename "$app" .app)"
-            parent="$(basename "$(dirname "$app")")"
-            suffix="${parent#diskguardian-}"
-            if [ "$suffix" = "$parent" ]; then suffix="$(echo "$parent" | sed 's/.*-//')"; fi
+            suffix="$(echo "$app" | sed -E 's#^artifacts/diskguardian-##; s#/.*##')"
+            if [ -z "$suffix" ] || [ "$suffix" = "$app" ]; then
+              echo "cannot derive an architecture from $app"; exit 1
+            fi
             ditto -c -k --sequesterRsrc --keepParent "$app" "out/${name}-${suffix}.zip"
           done
           count=$(ls -1 out | wc -l | tr -d ' ')
