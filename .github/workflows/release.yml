@@ -277,6 +277,34 @@ jobs:
           # for this arm: one byte flipped in the reference's .text, one in .rodata —
           # both must fail here. Residual blind spot, stated: bytes outside any section
           # are undetectable by any content check.
+          # Hash one section's bytes. objcopy is the primary path, but it refuses some
+          # sections outright: iteration 5 showed it reject .shstrtab on both binaries
+          # with "can't dump section '.shstrtab' - it does not exist: cause of error
+          # unknown", though readelf lists the section and its offset is real. Anything
+          # objcopy will not dump is read straight out of the file at the offset and
+          # size readelf reports, so a section is never skipped by accident — before
+          # this fallback existed, .shstrtab silently reused .rodata's bytes and
+          # "matched".
+          section_hash() { # $1 file, $2 section, $3 scratch path; prints sha256
+            local f="$1" sec="$2" out="$3" cols off size
+            rm -f "$out"
+            if objcopy --dump-section "$sec=$out" "$f" 2>/dev/null && [ -f "$out" ]; then
+              sha256sum "$out" | cut -d' ' -f1
+              return 0
+            fi
+            cols="$(readelf -SW "$f" \
+              | sed -E 's/^ *\[ *[0-9]+\] +//' \
+              | awk -v s="$sec" '$1 == s {print $4, $5; exit}')"
+            [ -n "$cols" ] || return 1
+            off="${cols%% *}"
+            size="${cols##* }"
+            case "$off$size" in *[!0-9]*) return 1 ;; esac
+            rm -f "$out"
+            tail -c "+$((off + 1))" "$f" | head -c "$size" > "$out"
+            [ -f "$out" ] || return 1
+            sha256sum "$out" | cut -d' ' -f1
+          }
+
           check_appimage_binary() {
             local ref="$1" payload="$2" label="$3"
             echo "── AppImage ELF-content check: $label ($payload) ──"
@@ -315,29 +343,17 @@ jobs:
               esac
               typ="$(readelf -SW "$ref" | sed -E 's/^ *\[ *[0-9]+\] +//' | awk -v s="$sec" '$1 == s {print $2; exit}')"
               if [ "$typ" = "NOBITS" ]; then echo "section $sec: skipped (NOBITS — no file bytes to hash)"; continue; fi
-              # Remove both dumps BEFORE extracting. objcopy can exit 0 while
-              # writing nothing; the previous section's file would then be hashed
-              # a second time under the new name, and two different sections
-              # would "match". That is not hypothetical: iteration 4 printed
-              # .rodata and .shstrtab with identical reference hashes
-              # (0e40f15e… on the app, 53572043… on the admin), which real
-              # section content cannot produce. Existence after a deliberate
-              # rm is the only thing that proves a write happened; the exit
-              # code is not.
-              rm -f "$tmpd/ref.bin" "$tmpd/pay.bin"
-              h_ref=""; h_pay=""
-              if objcopy --dump-section "$sec=$tmpd/ref.bin" "$ref" 2>"$tmpd/ref.err" \
-                 && [ -f "$tmpd/ref.bin" ]; then
-                h_ref="$(sha256sum "$tmpd/ref.bin" | cut -d' ' -f1)"
-              fi
-              if objcopy --dump-section "$sec=$tmpd/pay.bin" "$payload" 2>"$tmpd/pay.err" \
-                 && [ -f "$tmpd/pay.bin" ]; then
-                h_pay="$(sha256sum "$tmpd/pay.bin" | cut -d' ' -f1)"
-              fi
+              # section_hash removes its output before extracting and only accepts a
+              # hash when the file exists afterwards, so a dump that exits 0 while
+              # writing nothing can never be mistaken for the previous section's
+              # bytes. Iteration 4 printed .rodata and .shstrtab with identical
+              # reference hashes (0e40f15e… on the app, 53572043… on the admin) —
+              # real section content cannot do that, and it was objcopy declining
+              # .shstrtab while the stale .rodata dump was re-hashed.
+              h_ref="$(section_hash "$ref" "$sec" "$tmpd/ref.bin")" || h_ref=""
+              h_pay="$(section_hash "$payload" "$sec" "$tmpd/pay.bin")" || h_pay=""
               if [ -z "$h_ref" ] || [ -z "$h_pay" ]; then
                 echo "MISS: cannot extract section $sec for comparison ($label)"
-                if [ -s "$tmpd/ref.err" ]; then sed 's/^/    ref objcopy: /' "$tmpd/ref.err"; fi
-                if [ -s "$tmpd/pay.err" ]; then sed 's/^/    pay objcopy: /' "$tmpd/pay.err"; fi
                 FAIL=1
                 continue
               fi
