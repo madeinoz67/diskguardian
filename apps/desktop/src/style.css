@@ -1022,17 +1022,3 @@ body.dragging #sunburst {
   font-size: 12.5px;
   line-height: 1.5;
 }
-
-.hidden-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  align-items: center;
-  padding: 6px 9px;
-  border-radius: 6px;
-  font-size: 12.5px;
-}
-
-.hidden-row span:first-child {
-  overflow-wrap: anywhere;
-}

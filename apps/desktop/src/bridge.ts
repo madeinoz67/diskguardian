@@ -219,8 +219,9 @@ export async function onAdminProgress(handler: (p: AdminProgress) => void): Prom
 // ─── hidden space (C29) ──────────────────────────────────────────────────────────────
 
 /**
- * The hidden-space breakdown of the current volume scan. The command takes a scan id
- * and nothing else: the webview cannot name a path.
+ * The hidden-space report of the current volume scan: the measured residual, the held
+ * decomposition's words, and the purgeable annotation. The command takes a scan id and
+ * nothing else: the webview cannot name a path.
  */
 export async function hiddenSpace(scanId: string): Promise<HiddenSpaceReport> {
   if (!isTauri) return demoHidden()
@@ -229,7 +230,9 @@ export async function hiddenSpace(scanId: string): Promise<HiddenSpaceReport> {
 
 /**
  * Open the Full Disk Access pane. The URL is fixed on the Rust side — this command has
- * no arguments, so it can never be aimed anywhere else.
+ * no arguments, so it can never be aimed anywhere else. Held with the panel's
+ * protected-areas section (part of the held decomposition): nothing calls it until
+ * that section returns.
  */
 export async function openFdaPane(): Promise<void> {
   if (!isTauri) return
@@ -538,8 +541,9 @@ function demoPurge(): PurgeReport {
 
 /**
  * The browser demo's hidden-space report: the same shape and the same honest wording,
- * with synthetic figures. It claims no purge and invents no snapshot size — the demo
- * tree's numbers are not a volume's.
+ * with synthetic figures — the held note mirrors the backend constant word for word,
+ * because the demo must not show a decomposition the real panel does not show. It
+ * claims no purge, and the demo tree's numbers are not a volume's.
  */
 function demoHidden(): HiddenSpaceReport {
   return {
@@ -547,19 +551,11 @@ function demoHidden(): HiddenSpaceReport {
     used_bytes: 994_662_584_320,
     tree_bytes: 830_000_000_000,
     hidden_bytes: 164_662_584_320,
-    other_volumes: [
-      { name: 'Preboot', bytes: 9_041_682_432 },
-      { name: 'Recovery', bytes: 1_307_287_552 },
-      { name: 'VM', bytes: 4_295_032_832 },
-    ],
-    snapshot_count: DEMO_SNAPSHOTS.length,
-    snapshot_note:
-      'macOS does not report how much each holds; any they hold is part of the still-hidden figure',
-    restricted_roots: [{ path: '/Users/you/Private', note: 'permission denied' }],
+    decomposition_held_note:
+      'The breakdown into other volumes, snapshots and protected areas is held pending a cross-check on a second volume: until then no category of the hidden figure is shown — not as a figure, and not as zero. The hidden figure itself is measured: the volume\'s used space minus everything this scan could see.',
     purgeable_bytes: 164_000_000_000,
     purgeable_note:
       'up to this much: snapshots, caches and offloaded content macOS may free on its own',
-    still_hidden_bytes: 150_018_681_504,
     skipped_mounts: ['/Volumes/com.apple.TimeMachine.localsnapshots'],
     measured_at: Math.floor(Date.now() / 1000),
     negative_note: null,

@@ -570,10 +570,11 @@ function renderLegend(): void {
     row.append(dot, name, size)
 
     // A symlink is a pointer someone placed on purpose: never offered for collection.
-    // The hidden petal is synthetic (no id): its row opens the breakdown panel instead
-    // of navigating, exactly as the petal's click does.
+    // The hidden petal is synthetic (no id): its row opens the hidden-space panel
+    // instead of navigating, exactly as the petal's click does.
     if (node.kind === 'hidden') {
-      row.title = 'Space on this volume the scan cannot see: other volumes, snapshots, protected areas. Click for the breakdown.'
+      row.title =
+        'Space on this volume the scan could not see. Click for the measured figure and what is held.'
       row.addEventListener('click', () => {
         openOverlay(hiddenPanel)
         void refreshHiddenSpace()
@@ -1525,11 +1526,11 @@ async function refreshDuplicates(): Promise<void> {
 
 // ─── hidden space ────────────────────────────────────────────────────────────────────
 //
-// The words live in hidden.ts, where they are tested: no size is ever invented for a
-// snapshot, a missing decomposition is never "0 other volumes", a negative residual is
-// words rather than a zero-width petal, and purgeable is an "up to" annotation. This
-// half only builds the rows, with textContent — every path in the panel is a
-// disk-derived string.
+// The words live in hidden.ts, where they are tested: the decomposition is held and its
+// note is passed through verbatim (no category ever renders as a figure or a zero), a
+// negative residual is words rather than a zero-width petal, and purgeable is an "up
+// to" annotation. This half only builds the rows, with textContent — every path in the
+// panel is a disk-derived string.
 
 /** One titled block of lines in the hidden-space panel. */
 function hiddenSection(title: string): HTMLElement {
@@ -1558,72 +1559,17 @@ function renderHiddenPanel(model: HiddenModel): void {
 
   hiddenList.replaceChildren()
 
-  if (model.otherVolumes !== null) {
-    const section = hiddenSection('Other volumes of this container')
-    section.append(hiddenLine(model.otherVolumesLine))
-    for (const volume of model.otherVolumes) {
-      const row = document.createElement('div')
-      row.className = 'hidden-row'
-      const name = document.createElement('span')
-      name.textContent = volume.name
-      const bytes = document.createElement('span')
-      bytes.className = 'legend-size'
-      bytes.textContent = volume.bytes
-      row.append(name, bytes)
-      section.append(row)
-    }
-    hiddenList.append(section)
-  } else {
-    const section = hiddenSection('Other volumes of this container')
-    section.append(hiddenLine(model.otherVolumesLine))
-    hiddenList.append(section)
-  }
-
-  const snapshots = hiddenSection('Local snapshots')
-  snapshots.append(hiddenLine(model.snapshotLine))
-  hiddenList.append(snapshots)
+  // The decomposition is held, and this section says so in the backend's own words —
+  // never an empty section, and never a category rendered as a figure or a zero. The
+  // held note is the whole section until the external-volume cross-check un-holds it.
+  const held = hiddenSection('Breakdown')
+  held.append(hiddenLine(model.heldLine))
+  hiddenList.append(held)
 
   if (model.purgeableLine !== null) {
     const purgeable = hiddenSection('Purgeable space')
     purgeable.append(hiddenLine(model.purgeableLine))
     hiddenList.append(purgeable)
-  }
-
-  if (model.stillHiddenLine !== null) {
-    const still = hiddenSection('Still hidden')
-    still.append(hiddenLine(model.stillHiddenLine))
-    hiddenList.append(still)
-  }
-
-  if (model.protectedAreas.length > 0 || model.fdaHint !== null) {
-    const protectedSection = hiddenSection('Protected areas')
-    for (const area of model.protectedAreas) {
-      const row = document.createElement('div')
-      row.className = 'hidden-row'
-      const path = document.createElement('span')
-      path.textContent = area.path
-      const note = document.createElement('span')
-      note.className = 'legend-size'
-      note.textContent = area.note
-      row.append(path, note)
-      protectedSection.append(row)
-    }
-    if (model.fdaHint !== null) {
-      protectedSection.append(hiddenLine(model.fdaHint))
-      // Closes C23's recorded deferral: one line and one button, offered
-      // unconditionally while restricted roots remain — there is no clean API to
-      // detect whether access is already granted, so the hint does not pretend to know.
-      const grant = document.createElement('button')
-      grant.type = 'button'
-      grant.textContent = 'Open Full Disk Access settings…'
-      grant.addEventListener('click', () => {
-        void bridge.openFdaPane().catch((error: unknown) => {
-          showError(`Could not open System Settings: ${String(error)}`)
-        })
-      })
-      protectedSection.append(grant)
-    }
-    hiddenList.append(protectedSection)
   }
 
   if (model.skippedLine !== null) {
@@ -1632,7 +1578,9 @@ function renderHiddenPanel(model: HiddenModel): void {
     hiddenList.append(skipped)
   }
 
-  hiddenList.append(hiddenLine(model.measuredLine))
+  if (model.measuredLine !== null) {
+    hiddenList.append(hiddenLine(model.measuredLine))
+  }
 }
 
 async function refreshHiddenSpace(): Promise<void> {

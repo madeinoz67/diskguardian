@@ -1,14 +1,40 @@
 // The hidden-space panel model, and the renders it must refuse.
 //
-// C29's falsifiers, as tests: a per-snapshot size shown anywhere; a missing decomposition
-// shown as "0 other volumes"; a negative residual swallowed into a zero figure or a
-// zero-width petal; purgeable space presented as freed or as part of the residual.
+// C29 narrowed (2026-11-03): the decomposition into other volumes, snapshots and
+// protected areas is HELD pending the external-volume cross-check, so the model carries
+// no decomposition category at all — an unshown category can never be read as an empty
+// one. The refusals that stay, each pinned by a test: a negative residual is words, not
+// a zero-width petal; purgeable is "up to", never freed space and never a slice of the
+// hidden figure; the held note passes through verbatim, never swallowed or reworded.
 
 import { describe, expect, test } from 'bun:test'
 import { hiddenModel } from './hidden'
 import type { HiddenSpaceReport } from './types'
 
-const SNAPSHOT_NOTE = 'macOS does not report how much each snapshot holds'
+const HELD_NOTE =
+  'The breakdown into other volumes, snapshots and protected areas is held pending a cross-check on a second volume: until then no category of the hidden figure is shown — not as a figure, and not as zero. The hidden figure itself is measured: the volume\'s used space minus everything this scan could see.'
+
+/** The decomposition's fields: none of these may exist on the model while it is held. */
+const HELD_FIELDS = [
+  'otherVolumes',
+  'otherVolumesLine',
+  'snapshotLine',
+  'stillHiddenLine',
+  'protectedAreas',
+  'fdaHint',
+] as const
+
+/** The shipped surface: exactly these fields, held line included. */
+const SHIPPED_FIELDS = [
+  'headline',
+  'petalBytes',
+  'hiddenFigure',
+  'negativeNote',
+  'heldLine',
+  'purgeableLine',
+  'skippedLine',
+  'measuredLine',
+] as const
 
 function report(overrides: Partial<HiddenSpaceReport> = {}): HiddenSpaceReport {
   return {
@@ -16,16 +42,9 @@ function report(overrides: Partial<HiddenSpaceReport> = {}): HiddenSpaceReport {
     used_bytes: 2_000_000_000,
     tree_bytes: 1_800_000_000,
     hidden_bytes: 200_000_000,
-    other_volumes: [
-      { name: 'Preboot', bytes: 100_000 },
-      { name: 'VM', bytes: 50_000 },
-    ],
-    snapshot_count: 3,
-    snapshot_note: SNAPSHOT_NOTE,
-    restricted_roots: [{ path: '/private/one', note: 'permission denied' }],
+    decomposition_held_note: HELD_NOTE,
     purgeable_bytes: 164_000_000_000,
     purgeable_note: 'measured as the difference between two capacity figures the OS reports',
-    still_hidden_bytes: 199_850_000,
     skipped_mounts: ['/Volumes/com.apple.TimeMachine.localsnapshots/xyz'],
     measured_at: 1_790_000_000,
     negative_note: null,
@@ -40,42 +59,31 @@ describe('the hidden-space model', () => {
     expect(model.petalBytes).toBe(200_000_000)
   })
 
-  test('a snapshot is never given a size', () => {
-    const model = hiddenModel(report({ snapshot_count: 3 }))
-    // Exact equality: the line is a count and the OS's own limitation, and nothing else —
-    // any byte figure beside a snapshot would be invented (C27's doctrine, extended).
-    expect(model.snapshotLine).toBe(`3 local snapshots · ${SNAPSHOT_NOTE}`)
+  test('while the breakdown is held, the model exposes no decomposition category', () => {
+    const model = hiddenModel(report()) as unknown as Record<string, unknown>
+    const keys = Object.keys(model)
+    for (const field of HELD_FIELDS) {
+      expect(keys).not.toContain(field)
+    }
+    for (const field of SHIPPED_FIELDS) {
+      expect(keys).toContain(field)
+    }
   })
 
-  test('a snapshot count of one is singular, and zero is the note alone', () => {
-    expect(hiddenModel(report({ snapshot_count: 1 })).snapshotLine).toBe(
-      `1 local snapshot · ${SNAPSHOT_NOTE}`,
-    )
-    expect(hiddenModel(report({ snapshot_count: 0 })).snapshotLine).toBe(SNAPSHOT_NOTE)
-  })
-
-  test('a missing decomposition is words, never a zero', () => {
-    const model = hiddenModel(report({ other_volumes: null, still_hidden_bytes: null }))
-    expect(model.otherVolumes).toBeNull()
-    // The line must not be parseable as a figure: "0 other volumes" would claim a
-    // measurement the OS never made.
-    expect(model.otherVolumesLine).toBe('Breakdown not available on this volume.')
-    expect(model.otherVolumesLine).not.toMatch(/^\d/)
-  })
-
-  test('other volumes are listed with figures and a total', () => {
-    const model = hiddenModel(report())
-    expect(model.otherVolumes?.map((v) => v.name)).toEqual(['Preboot', 'VM'])
-    expect(model.otherVolumesLine).toBe('2 other volumes in this container · 146 KB')
+  test('the held note is passed through verbatim, never swallowed or reworded', () => {
+    expect(hiddenModel(report()).heldLine).toBe(HELD_NOTE)
+    expect(
+      hiddenModel(report({ decomposition_held_note: 'different words entirely' })).heldLine,
+    ).toBe('different words entirely')
   })
 
   test('purgeable is an upper bound, never freed space, and absent when unmeasured', () => {
     const model = hiddenModel(report())
     expect(model.purgeableLine).toContain('up to')
     expect(model.purgeableLine).toContain('153 GB')
-    // Purgeable never appears as part of the hidden figure: the components the model
-    // renders for the residual are other volumes and still-hidden only.
-    expect(model.otherVolumesLine).not.toContain('purgeable')
+    // Purgeable never appears as part of the hidden figure: the model renders the
+    // residual as one figure with no components at all.
+    expect(model.headline).not.toContain('purgeable')
 
     const unmeasured = hiddenModel(report({ purgeable_bytes: null, purgeable_note: null }))
     expect(unmeasured.purgeableLine).toBeNull()
@@ -104,30 +112,6 @@ describe('the hidden-space model', () => {
     expect(model.negativeNote).not.toBeNull()
   })
 
-  test('a still-hidden figure that would be negative is words about the inconsistency', () => {
-    // other volumes exceeding the whole residual is the boundary-leak signal: the model
-    // must not render a negative byte count any more than a silent zero.
-    const model = hiddenModel(report({ still_hidden_bytes: -1_000 }))
-    expect(model.stillHiddenLine).toContain('rescan')
-    expect(model.stillHiddenLine).not.toMatch(/-/)
-  })
-
-  test('the Full Disk Access hint appears only while protected areas remain', () => {
-    const hinted = hiddenModel(report())
-    expect(hinted.fdaHint).toContain('Full Disk Access')
-
-    const without = hiddenModel(report({ restricted_roots: [] }))
-    expect(without.fdaHint).toBeNull()
-    expect(without.protectedAreas).toEqual([])
-  })
-
-  test('protected areas are named with their reason', () => {
-    const model = hiddenModel(report())
-    expect(model.protectedAreas).toEqual([
-      { path: '/private/one', note: 'permission denied' },
-    ])
-  })
-
   test('skipped mounts are listed, not silently absent', () => {
     const model = hiddenModel(report())
     expect(model.skippedLine).toContain('com.apple.TimeMachine.localsnapshots')
@@ -135,9 +119,14 @@ describe('the hidden-space model', () => {
     expect(none.skippedLine).toBeNull()
   })
 
-  test('the decomposition figures say when they were measured', () => {
+  test('the scan-time line claims only the purgeable measurement, and nothing without one', () => {
     const model = hiddenModel(report())
-    expect(model.measuredLine).toContain('measured at scan time')
+    expect(model.measuredLine).toContain('Purgeable measured at scan time')
     expect(model.measuredLine).toContain('2026')
+
+    // No purgeable figure means nothing was measured at scan time: no line, because a
+    // "measured at" line over an unmeasured panel would be a claim this app refuses.
+    const unmeasured = hiddenModel(report({ purgeable_bytes: null, purgeable_note: null }))
+    expect(unmeasured.measuredLine).toBeNull()
   })
 })

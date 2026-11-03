@@ -5,20 +5,21 @@ use std::sync::Mutex;
 
 /// Volume-scan context (C29): present on a `Scan` iff its root was a mount point.
 /// The anchor itself is re-measured at every projection (one statfs); only the
-/// slow-moving decomposition components are measured once, here, at scan completion.
+/// slow-moving scan-time measurement (the purgeable annotation) is measured once, here,
+/// at scan completion.
+///
+/// The decomposition into other container volumes, the snapshot count and the protected
+/// areas is **held** (2026-11-03): its acceptance run was underpowered and the
+/// external-volume tie-breaker has not run, so none of it is measured, stored or sent —
+/// see [`crate::commands::DECOMPOSITION_HELD_NOTE`]. The parsers stay in
+/// [`crate::volume`] for the cross-check that can un-hold it.
 pub struct VolumeScan {
     /// The mount the anchor is measured against — the scan root as requested.
     pub mount: PathBuf,
-    /// The parsed container report, as `diskutil` answered at scan completion. `None`
-    /// when the root cannot be mapped or the parse refused: absent, never zeros.
-    pub decomposition: Option<crate::volume::ContainerReport>,
-    /// "Up to N": an annotation beside the breakdown, never a slice of the residual.
+    /// "Up to N": an annotation beside the hidden figure, never a slice of it.
     pub purgeable: Option<u64>,
-    /// Counted, never sized (C27).
-    pub snapshot_count: u64,
-    pub snapshot_note: String,
-    /// Unix seconds of the decomposition measurement, for the "measured at scan time"
-    /// line.
+    /// Unix seconds of the scan-time measurement (the purgeable annotation), for the
+    /// "measured at scan time" line.
     pub measured_at: u64,
 }
 

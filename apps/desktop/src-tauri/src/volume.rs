@@ -7,19 +7,22 @@
 //!    On APFS those are container-wide numbers, which is exactly what a scan of `/`
 //!    should be compared against. Not sysinfo's `available_space`, which on macOS
 //!    includes the purgeable pool and would understate used by that whole figure.
-//! 2. **What do the *other* volumes of this container hold?** [`other_volumes`] runs
-//!    `diskutil apfs list -plist` with a **fixed argv, no interpolation** — the C27
-//!    `tmutil` rule: no disk-derived string ever reaches a command line. The plist is
-//!    parsed as data; its volume names are data too, shown only in this user's own
-//!    panel. A parse failure yields `None`: the decomposition is absent, never a list
-//!    of zeros.
+//! 2. **What do the *other* volumes of this container hold?** The decomposition this
+//!    question feeds is **held** (2026-11-03): its acceptance run was underpowered and
+//!    the external-volume tie-breaker has not run, so nothing in the shipped panel asks
+//!    it. The machinery stays — [`parse_containers`], [`decompose_other_volumes`],
+//!    [`container_report`] and their tests — because it is exactly what that cross-check
+//!    will run, and the acceptance harness (`examples/hidden_measure.rs`) still drives
+//!    it. It runs `diskutil apfs list -plist` with a **fixed argv, no interpolation**
+//!    (the C27 `tmutil` rule), parses the plist as data, and refuses rather than
+//!    half-parses.
 //! 3. **How much can macOS free on its own?** [`purgeable_bytes`] is the difference
 //!    between two capacity figures the OS reports (`NSURL` resource values). It is an
 //!    annotation — "up to N" — never a slice of the hidden residual, because much of
 //!    that pool is space the tree already counts.
 //!
-//! Snapshots are counted, never sized (C27): the panel reuses the existing listing and
-//! its no-size doctrine.
+//! Snapshots are counted, never sized (C27), by the snapshots panel of C27; the
+//! hidden-space panel no longer carries a count while the decomposition is held.
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -111,6 +114,11 @@ pub fn volume_used(mount: &Path) -> Option<u64> {
 }
 
 // ─── other volumes of the container ───────────────────────────────────────────────────
+//
+// HELD (2026-11-03): the decomposition below is not shown by the shipped panel — see
+// `commands::DECOMPOSITION_HELD_NOTE` for the state and its words. It is retained,
+// tested, and driven by `examples/hidden_measure.rs`, because the external-volume
+// cross-check that can un-hold it is exactly these functions.
 
 /// One volume of an APFS container, as `diskutil` reports it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -246,10 +254,10 @@ pub fn decompose_other_volumes(
     Some((boot.container.clone(), others))
 }
 
-/// The scan volume's own container, measured by `diskutil` now and stored whole on the
-/// `Scan`; the split into other volumes happens at panel time against the stored
-/// mount. `None` off macOS, on any subprocess or parse failure, or for a root that
-/// cannot be mapped: absent, never zeros.
+/// The scan volume's own container, measured by `diskutil` now. `None` off macOS, on
+/// any subprocess or parse failure, or for a root that cannot be mapped: absent, never
+/// zeros. Held from the shipped panel (see the section note above); the acceptance
+/// harness still calls it.
 pub fn container_report(mount: &Path) -> Option<ContainerReport> {
     #[cfg(target_os = "macos")]
     {
@@ -270,9 +278,11 @@ pub fn container_report(mount: &Path) -> Option<ContainerReport> {
     }
 }
 
-/// The three probes behind hidden space, as injectable slots (the `admin_launch` seam
+/// The probes behind hidden space, as injectable slots (the `admin_launch` seam
 /// pattern): the IPC tests feed canned figures without a real volume, and production
-/// reads the real OS.
+/// reads the real OS. The `container` slot is consulted by nothing in the shipped path
+/// while the decomposition is held — it stays so the cross-check's harness and the
+/// future un-held path keep one seam shape.
 pub type UsedProbe = std::sync::Arc<dyn Fn(&Path) -> Option<u64> + Send + Sync>;
 pub type ContainerProbe = std::sync::Arc<dyn Fn(&Path) -> Option<ContainerReport> + Send + Sync>;
 pub type PurgeableProbe = std::sync::Arc<dyn Fn(&Path) -> Option<u64> + Send + Sync>;
@@ -353,7 +363,12 @@ fn volume_capacities(mount: &Path) -> Option<(u64, u64)> {
     Some((important, available))
 }
 
-// ─── the Full Disk Access hint (C23's deferred line, landed here) ─────────────────────
+// ─── the Full Disk Access hint (C23's deferred line) ──────────────────────────────────
+//
+// The hint's home is the hidden-space panel's protected-areas section, which is part of
+// the held decomposition: while held, nothing in the UI offers this command. It stays
+// registered — fixed URL, no arguments — so the un-hold restores the hint by restoring
+// the section, with no new capability appearing from nowhere.
 
 /// The Full Disk Access pane, by its fixed URL. The command takes no arguments, so the
 /// webview can never aim it anywhere else.
@@ -361,8 +376,8 @@ pub const FDA_PANE_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
 
 /// Open the Full Disk Access pane. Offered once, unconditionally, while restricted
-/// roots remain: there is no clean API to detect whether access is already granted, so
-/// the hint does not pretend to know.
+/// roots remain (when the protected-areas section returns): there is no clean API to
+/// detect whether access is already granted, so the hint does not pretend to know.
 #[tauri::command(async)]
 pub fn open_fda_pane() -> Result<(), String> {
     #[cfg(target_os = "macos")]

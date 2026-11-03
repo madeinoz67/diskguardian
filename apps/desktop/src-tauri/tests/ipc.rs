@@ -2122,14 +2122,16 @@ fn inject_probes(
 /// A scan registered as a volume scan, over a real fixture with one restricted root:
 /// `payload.bin` measurable, `locked/` chmod 000. Returns (scan_id, root, tree_total,
 /// locked_path). The fixture is leaked like every other one, and its permissions are
-/// the caller's to restore.
+/// the caller's to restore. `container_probe` only decides whether the seam *could*
+/// supply a container report — the held decomposition consults it either way, and the
+/// held test relies on a supplied report not surfacing.
 fn seed_volume_scan(
     app: &tauri::App<MockRuntime>,
     used: u64,
-    decomposition: bool,
+    container_probe: bool,
     purgeable: Option<u64>,
 ) -> (String, u64, u64, PathBuf) {
-    inject_probes(app, used, decomposition, purgeable);
+    inject_probes(app, used, container_probe, purgeable);
 
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("payload.bin"), vec![7u8; 128 * 1024]).expect("write");
@@ -2147,10 +2149,7 @@ fn seed_volume_scan(
 
     let ctx = VolumeScan {
         mount: PathBuf::from("/"),
-        decomposition: decomposition.then(canned_container),
         purgeable,
-        snapshot_count: 2,
-        snapshot_note: "macOS does not report how much each snapshot holds".to_string(),
         measured_at: 1_790_000_000,
     };
     let scan_id = app.state::<AppState>().insert_with(tree, Some(ctx));
@@ -2225,8 +2224,37 @@ fn a_folder_scan_reports_no_anchor() {
     );
 }
 
+/// The held state's payload expectations, shared by every hidden-space test: the panel's
+/// words ride the report, and none of the decomposition's categories exist as fields —
+/// held means a category can be rendered neither as a figure nor as a zero.
+fn assert_decomposition_held(report: &serde_json::Value) {
+    let note = report["decomposition_held_note"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    assert!(
+        note.contains("held") && note.contains("cross-check"),
+        "the held note says, in plain words, that the breakdown is held pending the \
+         external-volume cross-check: {report}"
+    );
+    let keys = report.as_object().expect("the report is an object");
+    for category in [
+        "other_volumes",
+        "snapshot_count",
+        "snapshot_note",
+        "restricted_roots",
+        "still_hidden_bytes",
+    ] {
+        assert!(
+            !keys.contains_key(category),
+            "while held, {category} is not in the payload at all — an absent field cannot \
+             be rendered as zero: {report}"
+        );
+    }
+}
+
 #[test]
-fn hidden_space_carries_the_anchor_the_decomposition_and_the_wording() {
+fn hidden_space_carries_the_anchor_the_held_note_and_the_wording() {
     let app = build();
     let webview = webview(&app);
     let used = 10 * 1024 * 1024;
@@ -2255,49 +2283,17 @@ fn hidden_space_carries_the_anchor_the_decomposition_and_the_wording() {
         "the residual is exactly used − tree"
     );
 
-    // The decomposition: only the volumes the walk did not cover, and never a volume of
-    // another container (the parser's own test pins that; this pins the payload).
-    let others = report["other_volumes"].as_array().expect("decomposed");
-    assert_eq!(
-        others.len(),
-        1,
-        "Preboot only — System and Data are covered: {report}"
-    );
-    assert_eq!(others[0]["name"].as_str(), Some("Synthetic Preboot"));
-    assert_eq!(others[0]["bytes"].as_u64(), Some(30_000));
+    // The decomposition is held even though the probe seam can still supply a container
+    // report: holding is the payload's decision, not an accident of a probe returning
+    // nothing (the seed above injects a canned container through the seam).
+    assert_decomposition_held(&report);
 
-    let still = report["still_hidden_bytes"].as_i64().expect("still hidden");
-    assert_eq!(
-        still,
-        (used as i64) - (tree_total as i64) - 30_000,
-        "still hidden is the residual minus the named volumes: {report}"
-    );
-
-    // The wording fields the claim requires: no invented snapshot size, purgeable as an
-    // upper bound.
-    assert_eq!(report["snapshot_count"].as_u64(), Some(2));
-    let snapshot_note = report["snapshot_note"].as_str().unwrap_or_default();
-    assert!(
-        snapshot_note.contains("does not report"),
-        "the snapshot note carries the OS's limitation: {snapshot_note}"
-    );
     let purgeable_note = report["purgeable_note"].as_str().unwrap_or_default();
     assert!(
         purgeable_note.contains("up to"),
         "purgeable is an upper bound, never a promise: {purgeable_note}"
     );
     assert!(purgeable_note.contains("Not part of the hidden figure"));
-
-    // Protected areas: the tree's restricted roots, named.
-    let restricted = report["restricted_roots"].as_array().expect("restricted");
-    assert_eq!(restricted.len(), 1, "one restricted root: {report}");
-    assert!(
-        restricted[0]["path"]
-            .as_str()
-            .unwrap_or_default()
-            .ends_with("locked"),
-        "the locked fixture is named: {report}"
-    );
 
     assert_eq!(
         report["negative_note"],
@@ -2357,13 +2353,9 @@ fn a_negative_residual_is_words_not_a_zero_petal() {
         !note.is_empty() && note.to_lowercase().contains("rescan"),
         "a negative residual carries words, not a silent zero: {note}"
     );
-    // No decomposition numbers survive a negative residual as figures: still-hidden is
-    // absent rather than a negative byte count dressed as a measurement.
-    assert_eq!(
-        report["still_hidden_bytes"],
-        serde_json::Value::Null,
-        "no still-hidden figure without a positive residual: {report}"
-    );
+    // The held state holds through a negative residual too: the words carry the state,
+    // and no decomposition figure survives as a number dressed as a measurement.
+    assert_decomposition_held(&report);
 
     let view = call(
         &webview,

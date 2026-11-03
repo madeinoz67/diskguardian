@@ -202,23 +202,13 @@ export interface FavouriteMarks {
   children: number[]
 }
 
-/** One other volume of the scanned volume's APFS container, measured by the OS. */
-export interface OtherVolumeEntry {
-  name: string
-  bytes: number
-}
-
-/** One topmost restricted root of the stored tree: named, size unknown by construction. */
-export interface RestrictedRootEntry {
-  path: string
-  note: string | null
-}
-
 /**
- * The hidden-space breakdown of one volume scan (C29). Absent optionals are honest
- * absences: `other_volumes: null` means "not decomposed on this volume", never "none";
- * `purgeable_bytes: null` means unmeasured, never zero; `negative_note` rides any
- * negative residual so it can never be shown as a silent zero.
+ * The hidden-space report of one volume scan (C29, narrowed 2026-11-03): the residual
+ * ships, the decomposition is held. The held note is the panel's words for that state;
+ * the decomposition's categories are not fields at all, so no category can be rendered
+ * as a figure or as a zero. `purgeable_bytes: null` means unmeasured, never zero;
+ * `negative_note` rides any negative residual so it can never be shown as a silent
+ * zero.
  */
 export interface HiddenSpaceReport {
   mount: string
@@ -227,13 +217,10 @@ export interface HiddenSpaceReport {
   tree_bytes: number
   /** `used − tree`, signed and unclamped. */
   hidden_bytes: number
-  other_volumes: OtherVolumeEntry[] | null
-  snapshot_count: number
-  snapshot_note: string
-  restricted_roots: RestrictedRootEntry[]
+  /** The held decomposition's words, verbatim from the backend. */
+  decomposition_held_note: string
   purgeable_bytes: number | null
   purgeable_note: string | null
-  still_hidden_bytes: number | null
   /** Mounts the volume boundary did not enter, listed rather than silently skipped. */
   skipped_mounts: string[]
   measured_at: number
