@@ -146,8 +146,11 @@ libfuse2t64`; if that does not resolve it, the pre-declared fallback in §5 fire
 > **Amended by Amendment 2 (below):** the build passes `--no-binary-patching` (deb/NSIS
 > payload binaries must hash-match cargo output exactly), and the Linux AppImage arm is
 > a per-section ELF-content check rather than a file hash, because Tauri/linuxdeploy
-> rewrite both binaries there by construction. This section's text stands as originally
-> written for macOS and for the deb's payload binaries.
+> rewrite both binaries there by construction. Three sections are exempt from the
+> per-section hash — `.dynstr`, `.dynamic`, and (maintainer ruling, see the Amendment 2
+> addendum) `.shstrtab` — with the section-NAME-set assertion as the compensating
+> control. This section's text stands as originally written for macOS and for the deb's
+> payload binaries.
 
 The rule each leg's verify step enforces, stated once:
 
@@ -452,6 +455,7 @@ cap kills the slice rather than degrading it.
 | `stage-admin.ts` hard-coded `../../target` | Does not fire on CI runners; in the ISA log | The workflow ever sets `CARGO_TARGET_DIR` or builds in a worktree |
 | Published `sha256sums.txt` beside assets | Stage-B already re-hashes downloads | First corrupted-download report |
 | Per-bundle-type updater support (what `--no-binary-patching` forgoes) | Amendment 2: the flag makes C30's byte-identity sentence true; the app ships no updater, so the forgone capability is unused | An updater is ever added — at which point the flag, the verify steps and C30's wording must be revisited together |
+| Removing the `.shstrtab` exemption (byte-exact name-table comparison in the AppImage arm) | The AppImage toolchain rewrites the table's byte layout on both binaries (run 41645973726); the section-NAME-set assertion already carries the semantics, so the exemption buys nothing back until the toolchain is byte-stable | A bundler/patchelf toolchain change that makes the table byte-stable, or a security review that wants the layout pinned |
 
 ## 6. Claim and anti-claim impact — exact ISA amendments
 
@@ -812,3 +816,32 @@ sets), nothing like the stale prints; both R-mutate sites still fail the check.
 whether it genuinely matches across the AppImage transformation is exactly what the
 next dispatch must show; if it genuinely differs, the exemption needs that evidence and
 the maintainer's ruling, not a silent addition.
+
+**Ruling, same day (implemented at `025cf53`): `.shstrtab` IS exempt, on that evidence.**
+Iteration 5 (run 41645973726) answered the question: the section genuinely differs
+across the AppImage transformation on BOTH binaries — reference `ceb97862…`, payload
+`6b8f3b8d…`, byte-identical pairs per side — while every other section genuinely
+matched and the step's only failures were the two `.shstrtab` lines. The maintainer
+ruled the exemption safe because the compensating control already sits inside the
+check: the section-NAME set is asserted equal BEFORE the per-section loop, so a
+renamed, added or dropped section fails regardless — what the exemption forgives is
+the bundler's byte arrangement of the names, not which sections exist or what they
+contain. A pre-ruling dispatch (run 41646829819) repeats the observation as the
+second consecutive data point. The paragraph above stands as the pre-ruling state,
+kept visible rather than rewritten.
+
+**Three reusable traps, found while proving this check — each one bit us once:**
+
+1. **GNU objcopy refuses some sections with exit code 0.** `objcopy --dump-section
+   .shstrtab=…` prints "can't dump section … it does not exist: file in wrong format"
+   and exits SUCCESS, writing nothing. Exit status is therefore not evidence that a
+   dump happened; only remove-then-write-then-verify is.
+2. **readelf prints file offsets and sizes in bare hex, and bash reads a leading zero
+   as octal.** Hex-letter values abort the arithmetic loudly; all-octal-digit values
+   (e.g. `0300`, meaning 768) silently address the WRONG window — and both sides of
+   the comparison read the same wrong window, which presents as a match. Force base
+   16 (`$((16#$off))`) wherever readelf output feeds shell arithmetic.
+3. **`head -c N > file` creates the file even when the read fails or comes up short.**
+   Existence proves nothing; only asserting the extracted byte count equals readelf's
+   stated size proves the window was real. (A legitimately-empty section reads zero
+   bytes and hashes as the empty digest on both sides — that is evidence, not a skip.)
