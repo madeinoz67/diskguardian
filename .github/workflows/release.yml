@@ -113,36 +113,37 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          find artifacts -name '*.dmg' -exec cp {} out/ \;
-          # Two architectures can produce the same dmg name; keep them apart.
-          for dir in artifacts/*; do
-            target="$(basename "$dir")"
-            for app in "$dir"/**/*.app "$dir"/*/*.app; do
-              [ -d "$app" ] || continue
-              name="$(basename "$app" .app)"
-              ditto -c -k --sequesterRsrc --keepParent "$app" "out/${name}-${target#diskguardian-}.zip"
-            done
+          # `find`, not a `**` glob: shell globstar is off by default and a silent
+          # no-match here would upload nothing and still succeed.
+          find artifacts -name '*.dmg' -type f -exec cp {} out/ \;
+          find artifacts -name '*.app' -type d -prune | while read -r app; do
+            name="$(basename "$app" .app)"
+            parent="$(basename "$(dirname "$app")")"
+            suffix="${parent#diskguardian-}"
+            if [ "$suffix" = "$parent" ]; then suffix="$(echo "$parent" | sed 's/.*-//')"; fi
+            ditto -c -k --sequesterRsrc --keepParent "$app" "out/${name}-${suffix}.zip"
           done
+          count=$(ls -1 out | wc -l | tr -d ' ')
+          echo "collected $count artifact(s):"
           ls -la out
+          [ "$count" -ge 2 ] || { echo "expected at least a dmg per architecture"; exit 1; }
 
       - name: Create or update the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          NOTES: |
+            Unsigned build: there is no signing identity for this project, so macOS will
+            quarantine the download. After moving DiskGuardian to Applications, either
+            right-click it and choose Open, or run:
+
+                xattr -dr com.apple.quarantine /Applications/DiskGuardian.app
+
+            The administrator measurement helper ships inside the app bundle and is only
+            ever started by the app, behind the system's own consent dialog. It measures;
+            it never deletes.
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          NOTES="$(cat <<'EOF'
-          Unsigned build: there is no signing identity for this project, so macOS will
-          quarantine the download. After moving DiskGuardian to Applications, either
-          right-click it and choose Open, or run:
-
-              xattr -dr com.apple.quarantine /Applications/DiskGuardian.app
-
-          The administrator measurement helper (`diskguardian-admin`) ships inside the app
-          bundle and is only ever started by the app, behind the system's own consent
-          dialog. It measures; it never deletes.
-          EOF
-          )"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" out/* --clobber
           else
