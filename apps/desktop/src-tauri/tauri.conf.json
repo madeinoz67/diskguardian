@@ -30,9 +30,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
     "icon": ["icons/icon.png"],
-    "externalBin": ["binaries/diskguardian-admin"],
     "category": "Utility",
     "shortDescription": "See what is filling your disk, and get the space back",
     "longDescription": "DiskGuardian draws your disk as an interactive sunburst: every folder a coloured petal sized by the space it really occupies. Drill in, collect what you do not need, and delete it."
