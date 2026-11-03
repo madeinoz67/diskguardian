@@ -60,6 +60,12 @@ cd apps/desktop && bun run tauri:build   # the bundle
   `use` or its fixture helper ungated is clean on the developer's machine and a `-D warnings`
   failure on the platforms that skip the test. CI runs the engine on macOS, Ubuntu and Windows
   precisely so this is caught; clippy on one platform is not a gate.
+- **Never force-push `main`** (principal, 2026-11-03). The only exception is emergency CI
+  remediation — a CI change that cannot land because CI itself is broken — and it needs the
+  principal's word in that moment, never a standing licence. A protected branch that can be
+  rewritten on request is not protected. The one thing a rewrite would tidy today is
+  `861a5d7`, an empty probe commit that proved protection binds; it stays, because violating
+  the rule to make history pretty is the rule failing its first test.
 - **A closed claim names how it was checked.** `scripts/check-isa-claims.ts` runs in CI: a claim
   this change newly ticks must carry a `**Probe:**`, `**Verified**`, `**Closed**`, `**Measured**`
   or `**Evidence:**` line, or the lane fails. It checks that evidence is *named*, never that it is
