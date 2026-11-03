@@ -143,6 +143,12 @@ libfuse2t64`; if that does not resolve it, the pre-declared fallback in §5 fire
 
 ### 3.3 Verification: hash-based, name-agnostic, per-platform expected sets
 
+> **Amended by Amendment 2 (below):** the build passes `--no-binary-patching` (deb/NSIS
+> payload binaries must hash-match cargo output exactly), and the Linux AppImage arm is
+> a per-section ELF-content check rather than a file hash, because Tauri/linuxdeploy
+> rewrite both binaries there by construction. This section's text stands as originally
+> written for macOS and for the deb's payload binaries.
+
 The rule each leg's verify step enforces, stated once:
 
 > The packaged payload contains, **byte-identical by SHA-256 to the cargo build products
@@ -445,6 +451,7 @@ cap kills the slice rather than degrading it.
 | Signing / notarization / SmartScreen reputation | No identity exists (recorded R3 decision); warnings are stated honestly instead | Developer ID acquired |
 | `stage-admin.ts` hard-coded `../../target` | Does not fire on CI runners; in the ISA log | The workflow ever sets `CARGO_TARGET_DIR` or builds in a worktree |
 | Published `sha256sums.txt` beside assets | Stage-B already re-hashes downloads | First corrupted-download report |
+| Per-bundle-type updater support (what `--no-binary-patching` forgoes) | Amendment 2: the flag makes C30's byte-identity sentence true; the app ships no updater, so the forgone capability is unused | An updater is ever added — at which point the flag, the verify steps and C30's wording must be revisited together |
 
 ## 6. Claim and anti-claim impact — exact ISA amendments
 
@@ -565,6 +572,10 @@ considered and rejected — it would fail the known-good 2.96 MB zip).
   `target/<triple>/release/` with different bytes after the build step; the verify step
   **must fail** on the hash mismatch. This is the content arm, and it works uniformly
   because references are read at verify time.
+  **Tightened by Amendment 2 for the AppImage arm:** the mutation is two named sites —
+  one byte flipped inside the reference's `.text`, one inside its `.rodata` — and both
+  must fail the per-section check (a build-id survives post-link mutation, so flipping
+  bytes is the only arm that proves the section hashes are load-bearing).
 - **R-neg (Windows)** — scratch branch, deliberately stage a sidecar and add the old
   `externalBin` to the Windows config; the Windows verify **must fail** on the negative
   assertion (proves the ruling is enforced, not just preferred).
