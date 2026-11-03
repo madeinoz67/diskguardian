@@ -177,42 +177,106 @@ jobs:
             exit 1
           fi
 
+      # INSTRUMENTED (Stage A iteration 2, 2026-11-03): the first dispatch failed
+      # "diskguardian-app not found by hash in the .deb payload" on a deb that built,
+      # extracted, and whose macOS twin passes the identical check. Before anything is
+      # changed about the comparison, this step now prints EVERY payload file with size
+      # and SHA-256, and — on a miss — `file` plus the rpath/runpath entries of both the
+      # reference binary and the same-named payload binary (the patchelf hypothesis:
+      # the bundler may rewrite the ELF rpath, making packaged bytes differ from cargo
+      # output BY CONSTRUCTION). The hash assertions themselves are unchanged: any miss
+      # still fails the step, only after all the evidence has printed.
       - name: Verify the bundles contain what they must (Linux)
         if: runner.os == 'Linux'
         working-directory: apps/desktop
         run: |
           set -euo pipefail
           REF_DIR="../../target/${{ matrix.target }}/release"
+          FAIL=0
           declare -A REF
           for bin in diskguardian-app diskguardian-admin; do
             REF[$bin]="$(sha256sum "$REF_DIR/$bin" | cut -d' ' -f1)"
-            echo "reference $bin sha256: ${REF[$bin]}"
+            echo "reference $bin sha256: ${REF[$bin]} size: $(stat -c%s "$REF_DIR/$bin") path: $REF_DIR/$bin"
           done
+          # Direct probe for the rpath-rewrite hypothesis: what does each reference
+          # binary say about its own rpath/runpath and interpreter?
+          if command -v readelf >/dev/null; then
+            for bin in diskguardian-app diskguardian-admin; do
+              echo "reference $bin readelf dynamic entries:"
+              readelf -d "$REF_DIR/$bin" | grep -Ei 'rpath|runpath|interpreter' || echo "  (no rpath/runpath/interpreter entries)"
+            done
+          else
+            echo "readelf unavailable; rpath comparison skipped (install binutils on the runner to include it)"
+          fi
           check_dir() {
-            local dir="$1" label="$2" bin hit f
+            local dir="$1" label="$2" bin hit f cand
+            echo "── $label: every file, with size and sha256 ──"
+            while IFS= read -r -d '' f; do
+              echo "$label file: $f size: $(stat -c%s "$f") sha256: $(sha256sum "$f" | cut -d' ' -f1)"
+            done < <(find "$dir" -type f -print0)
             for bin in diskguardian-app diskguardian-admin; do
               hit=""
               while IFS= read -r -d '' f; do
                 if [ "$(sha256sum "$f" | cut -d' ' -f1)" = "${REF[$bin]}" ]; then hit="$f"; break; fi
               done < <(find "$dir" -type f -print0)
-              test -n "$hit" || { echo "$bin not found by hash in the $label"; exit 1; }
-              echo "$label: $bin present by hash ($hit)"
+              if [ -n "$hit" ]; then
+                echo "$label: $bin present by hash ($hit)"
+              else
+                echo "MISS: $bin not found by hash in the $label"
+                FAIL=1
+                # Same-named payload binary vs the reference: sizes, types, and dynamic
+                # entries. If patchelf rewrote the ELF, size and rpath tell on it.
+                cand="$(find "$dir" -type f -name "$bin*" | head -1)"
+                if [ -n "$cand" ]; then
+                  echo "  closest payload candidate: $cand"
+                  echo "  payload size: $(stat -c%s "$cand") sha256: $(sha256sum "$cand" | cut -d' ' -f1)"
+                  echo "  reference size: $(stat -c%s "$REF_DIR/$bin") sha256: ${REF[$bin]}"
+                  file "$cand" || true
+                  if command -v readelf >/dev/null; then
+                    echo "  payload readelf dynamic entries:"
+                    readelf -d "$cand" | grep -Ei 'rpath|runpath|interpreter' || echo "  (no rpath/runpath/interpreter entries)"
+                  fi
+                  if command -v cmp >/dev/null; then
+                    echo "  first byte difference vs reference:"
+                    cmp -l "$REF_DIR/$bin" "$cand" 2>/dev/null | head -5 || echo "  (cmp found no accessible difference or failed)"
+                  fi
+                else
+                  echo "  no payload file even named like $bin"
+                fi
+              fi
             done
           }
           DEB="$(ls "$REF_DIR/bundle/deb/"*.deb | head -1)"
-          test -s "$DEB" || { echo "no deb produced"; exit 1; }
-          echo "deb: $DEB"
-          rm -rf debx && mkdir debx
-          dpkg-deb -x "$DEB" debx
-          check_dir debx ".deb payload"
+          if [ -s "$DEB" ]; then
+            echo "deb: $DEB"
+            rm -rf debx && mkdir debx
+            if dpkg-deb -x "$DEB" debx; then
+              check_dir debx ".deb payload"
+            else
+              echo "MISS: dpkg-deb -x failed on $DEB"
+              FAIL=1
+            fi
+          else
+            echo "MISS: no deb produced"
+            FAIL=1
+          fi
           APPIMG="$(ls "$REF_DIR/bundle/appimage/"*.AppImage | head -1)"
-          test -s "$APPIMG" || { echo "no AppImage produced"; exit 1; }
-          echo "appimage: $APPIMG"
-          APPIMG_ABS="$(cd "$(dirname "$APPIMG")" && pwd)/$(basename "$APPIMG")"
-          rm -rf appx && mkdir appx
-          # Type-2 extraction needs no FUSE.
-          (cd appx && "$APPIMG_ABS" --appimage-extract >/dev/null)
-          check_dir appx/squashfs-root "AppImage payload"
+          if [ -s "$APPIMG" ]; then
+            echo "appimage: $APPIMG"
+            APPIMG_ABS="$(cd "$(dirname "$APPIMG")" && pwd)/$(basename "$APPIMG")"
+            rm -rf appx && mkdir appx
+            # Type-2 extraction needs no FUSE.
+            if (cd appx && "$APPIMG_ABS" --appimage-extract >/dev/null); then
+              check_dir appx/squashfs-root "AppImage payload"
+            else
+              echo "MISS: --appimage-extract failed on $APPIMG"
+              FAIL=1
+            fi
+          else
+            echo "MISS: no AppImage produced"
+            FAIL=1
+          fi
+          exit "$FAIL"
 
       - uses: actions/upload-artifact@v4
         with:
