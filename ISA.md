@@ -769,6 +769,30 @@ In scope eventually, too dim to state as claims today:
 
 ## Log
 
+- 2026-11-04 — Multi-platform release, Stage A green and the RED controls run: **four pass, one
+  partial, and the partial found a defect in our own instrumentation rather than in the artifacts.**
+  Stage A's honest green is iteration 7 (run 41736259266, all four legs, **zero MISS lines**, the
+  only skips being the three named exemptions `.dynstr`, `.dynamic`, `.shstrtab`), with `.text`
+  matching genuinely on both binaries and the deb byte-identical. PR #3's four CI lanes are green
+  alongside it. Each control ran on its own scratch branch off `8af7d19`, one sabotage each —
+  stacking was rejected up front because R-neg's assertion sits after the phantom check and a
+  stacked run would have failed for the wrong reason. Four failed as designed: **R-phantom**
+  (41740327048) through the payload lookup, with the macOS leg honestly noted as failing earlier,
+  at the payload hash, because the phantom's payload path is absent from the bundle; **R-strip**
+  (41741129856) at the presence check; **R-neg** (41741242464), where a planted mixed-case
+  `DiskGuardian-Admin.exe` was enumerated, counted at 1, named, and refused — the control that
+  pins the app-only ruling; **R-mutate m2** (41741474090) on **both** arms, with the deb diagnostic
+  reporting "total differing bytes vs reference: 1" against the correctly chosen candidate and the
+  AppImage arm reporting `.rodata` differs. **R-mutate m1** (41741360938) is a **partial**: the deb
+  arm fired correctly, then the step died in the iteration-2 diagnostic block before the AppImage
+  arm ran, for two reasons of different size — the candidate find used `-name "$bin*"` and
+  nominated `diskguardian-app.png` from the deb's icon tree, dumping 21,603 lines of cmp noise, and
+  `printf '%s\n' "$DIFFS" | head -1` took SIGPIPE when head closed, which `pipefail` turned into
+  exit 141 and `set -e` turned into a dead step. Measured locally: the pipe form returns 141, the
+  herestring form returns 0. Both are fixed in `bbd9e94`; m1 awaits one fresh dispatch from the
+  fixed head, and `.text` through the workflow is unproven until it runs, though it is proven
+  locally and m2 proves the same section-compare arm end-to-end in CI.
+
 - 2026-11-03 — Multi-platform release, amendment 2, consuming no Stage A iteration: the Linux
   verification failure is root-caused and the premise corrected instead of weakened. The mutator
   is Tauri's bundler itself — `patch_binary` in `crates/tauri-bundler/src/bundle.rs` at
