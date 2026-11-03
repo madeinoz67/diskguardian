@@ -92,6 +92,21 @@ pub struct ScanOptions {
     /// means "not truncated for cancellation", never "the request was received". Both
     /// outcomes are honest; which one a given race produces is not stable across runs.
     pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Volume-scan boundary (C29): the root's device id defines the scan. A directory on
+    /// another device is another volume's content, not unmeasurable space of this one, so
+    /// it is not entered and not added to the tree — it is listed in
+    /// [`Tree::skipped_mounts`] instead, because excluded is a third state, distinct from
+    /// both measured and restricted.
+    ///
+    /// Unix-only in effect: std exposes `st_dev` on Unix. On Windows a drive root is a
+    /// mount point with nothing nested, so the bound is vacuous there by construction —
+    /// stated rather than pretended.
+    pub same_device_only: bool,
+    /// Subtrees to skip by path prefix (component-wise), with the same listed-not-dropped
+    /// treatment. The app supplies the two fixed macOS prefixes that share the boot
+    /// group's device id — the Data volume's own mount, and the transient local-snapshot
+    /// mounts — which the device bound alone cannot stop.
+    pub exclude_prefixes: Vec<PathBuf>,
 }
 
 /// The `note` a deadline-hit directory carries. Public so the caller that set the
@@ -152,6 +167,16 @@ pub fn scan_with_progress(
         visited: AtomicU64::new(0),
         errors: AtomicU64::new(0),
         progress,
+        // The device bound is captured from the root's own metadata — the same `meta`
+        // the walk already took — so "what is this scan" is fixed before anything is
+        // walked. Only read when `same_device_only` asked for a bounded walk.
+        root_dev: device_id(&meta),
+        exclude_prefixes: if opts.same_device_only || !opts.exclude_prefixes.is_empty() {
+            opts.exclude_prefixes.clone()
+        } else {
+            Vec::new()
+        },
+        skipped: Mutex::new(Vec::new()),
     };
 
     // Checked before the walk as well as inside it, because a file root has no directory to
@@ -181,12 +206,22 @@ pub fn scan_with_progress(
     let mut nodes: Vec<Node> = Vec::with_capacity(count_nodes(&scanned));
     let root_id = flatten(scanned, &mut nodes, None);
 
+    // The boundary's exclusions, in walk order for determinism (the walk is parallel,
+    // so the raw order is not), and deduplicated because a path is visited once.
+    let mut skipped_mounts = builder
+        .skipped
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    skipped_mounts.sort();
+    skipped_mounts.dedup();
+
     Ok(Tree {
         nodes,
         root: root_id,
         scanned_root: root.to_path_buf(),
         duration_ms: started.elapsed().as_millis() as u64,
         errors: builder.errors.load(Ordering::Relaxed),
+        skipped_mounts,
     })
 }
 
@@ -261,6 +296,30 @@ struct Builder {
     visited: AtomicU64,
     errors: AtomicU64,
     progress: Option<ProgressFn>,
+    /// The scan root's device id when a volume scan asked to be bounded by it. `None`
+    /// off Unix (std exposes `st_dev` on Unix only) — there the bound is vacuous, which
+    /// is also the truth: a Windows drive root is a mount point with nothing nested.
+    root_dev: Option<u64>,
+    exclude_prefixes: Vec<PathBuf>,
+    /// The mounts and prefixes the boundary excluded, in walk order; sorted and deduped
+    /// once at the end. `Mutex` because the walk is parallel.
+    skipped: Mutex<Vec<String>>,
+}
+
+/// The device a piece of metadata lives on, where the platform tells us. Unix only:
+/// `st_dev` has no std equivalent on Windows, so the device bound degrades to a no-op
+/// there rather than to a guess.
+fn device_id(meta: &fs::Metadata) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(meta.dev())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        None
+    }
 }
 
 impl Builder {
@@ -287,6 +346,49 @@ impl Builder {
         self.cancel
             .as_ref()
             .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+    }
+
+    /// Whether the volume boundary stops the walk at this directory. Prefixes match by
+    /// path components, never by characters: excluding `/x/skip` must not swallow
+    /// `/x/skipme` beside it.
+    fn boundary_excluded(&self, entry: &fs::DirEntry) -> bool {
+        let path = entry.path();
+        if self
+            .exclude_prefixes
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+        {
+            self.record_skipped(&path);
+            return true;
+        }
+        if self.crosses_device(entry) {
+            self.record_skipped(&path);
+            return true;
+        }
+        false
+    }
+
+    /// Whether this entry lives on a device the scan was not asked to measure. An entry
+    /// whose metadata cannot be read is *not* excluded on that account — the walk
+    /// proceeds and reports it restricted if it truly cannot be entered, which is A3's
+    /// shape, not this bound's.
+    fn crosses_device(&self, entry: &fs::DirEntry) -> bool {
+        let Some(root_dev) = self.root_dev else {
+            return false;
+        };
+        match entry.metadata().ok().and_then(|meta| device_id(&meta)) {
+            Some(dev) => dev != root_dev,
+            None => false,
+        }
+    }
+
+    /// Record a boundary exclusion. Reported, never silently dropped (A3): the tree's
+    /// `skipped_mounts` is the panel's list.
+    fn record_skipped(&self, path: &Path) {
+        self.skipped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(path.display().to_string());
     }
 
     fn walk_dir(&self, path: &Path, name: String, depth: usize) -> Scanned {
@@ -373,6 +475,22 @@ impl Builder {
         // million entries allocates tens of millions of strings just to sort itself.
         dirs.sort_by_cached_key(fs::DirEntry::file_name);
         files.sort_by_cached_key(fs::DirEntry::file_name);
+
+        // The volume boundary (C29), applied before anything is dispatched: a directory
+        // on another device, or under an excluded prefix, is another volume's content,
+        // not unmeasurable space of this one. It is not walked and not added to the
+        // tree; it is recorded, because excluded is a third state — distinct from both
+        // measured and restricted — and the panel names it. Neither check costs a
+        // syscall the walk was not already making: the metadata this reads is the same
+        // one `walk_dir` re-reads for `own_bytes`.
+        let mut bounded_dirs: Vec<fs::DirEntry> = Vec::with_capacity(dirs.len());
+        for entry in dirs {
+            if self.boundary_excluded(&entry) {
+                continue;
+            }
+            bounded_dirs.push(entry);
+        }
+        let dirs = bounded_dirs;
 
         // Checked before the dispatch as well as inside it: spawning a task per queued
         // directory after the user has abandoned the walk is work nobody asked for, and on a

@@ -252,6 +252,7 @@ fn restricted_roots_lists_only_topmost_restricted_nodes() {
         scanned_root: PathBuf::from("/synthetic"),
         duration_ms: 0,
         errors: 0,
+        skipped_mounts: Vec::new(),
     };
 
     assert_eq!(tree.restricted_roots(), vec![1, 3]);

@@ -127,6 +127,10 @@ export function colorFor(node: ViewNode, hue: number, depth: number): string {
   switch (node.kind) {
     case 'restricted':
       return 'hsl(276 68% 52%)'
+    case 'hidden':
+      // Low-saturation kin of `restricted`: the same "the engine cannot show you this"
+      // family, but a volume-level figure rather than a directory.
+      return 'hsl(276 24% 40%)'
     case 'aggregate':
       return 'hsl(220 8% 62% / 0.42)'
     case 'measuring':

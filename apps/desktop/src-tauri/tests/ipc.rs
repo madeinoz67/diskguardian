@@ -2063,3 +2063,383 @@ mod favourites {
         );
     }
 }
+
+// ─── hidden space (R5) ────────────────────────────────────────────────────────────────
+//
+// The panel's payload, driven the way the webview drives it. The anchors are injected
+// through the `volume_probes` seam (the `admin_launch` pattern) so every figure is
+// assertable without a real volume; the pure parsers have their own tests in
+// `volume.rs`, including the malformed-plist one.
+
+use diskguardian_app::state::VolumeScan;
+use diskguardian_app::volume::{ContainerReport, ContainerVolume, VolumeProbes};
+
+/// A canned boot-shaped container: Data and System are covered by a `/` scan, Preboot
+/// is not. Synthetic names and numbers, nothing from a real disk.
+fn canned_container() -> ContainerReport {
+    ContainerReport {
+        container: "disk9".to_string(),
+        volumes: vec![
+            ContainerVolume {
+                name: "Synthetic Data".to_string(),
+                device: "disk9s1".to_string(),
+                roles: vec!["Data".to_string()],
+                used_bytes: 1_000_000,
+            },
+            ContainerVolume {
+                name: "Synthetic System".to_string(),
+                device: "disk9s3".to_string(),
+                roles: vec!["System".to_string()],
+                used_bytes: 20_000,
+            },
+            ContainerVolume {
+                name: "Synthetic Preboot".to_string(),
+                device: "disk9s4".to_string(),
+                roles: vec!["Preboot".to_string()],
+                used_bytes: 30_000,
+            },
+        ],
+    }
+}
+
+fn inject_probes(
+    app: &tauri::App<MockRuntime>,
+    used: u64,
+    container: bool,
+    purgeable: Option<u64>,
+) {
+    let probes = VolumeProbes {
+        used: Arc::new(move |_| Some(used)),
+        container: Arc::new(move |_| container.then(canned_container)),
+        purgeable: Arc::new(move |_| purgeable),
+    };
+    *app.state::<AppState>()
+        .volume_probes
+        .lock()
+        .expect("volume probe seam") = Some(probes);
+}
+
+/// A scan registered as a volume scan, over a real fixture with one restricted root:
+/// `payload.bin` measurable, `locked/` chmod 000. Returns (scan_id, root, tree_total,
+/// locked_path). The fixture is leaked like every other one, and its permissions are
+/// the caller's to restore. `container_probe` only decides whether the seam *could*
+/// supply a container report — the held decomposition consults it either way, and the
+/// held test relies on a supplied report not surfacing.
+fn seed_volume_scan(
+    app: &tauri::App<MockRuntime>,
+    used: u64,
+    container_probe: bool,
+    purgeable: Option<u64>,
+) -> (String, u64, u64, PathBuf) {
+    inject_probes(app, used, container_probe, purgeable);
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("payload.bin"), vec![7u8; 128 * 1024]).expect("write");
+    fs::create_dir_all(dir.path().join("sub")).expect("mkdir");
+    fs::write(dir.path().join("sub/child.bin"), vec![7u8; 64 * 1024]).expect("write");
+    let locked = dir.path().join("locked");
+    fs::create_dir(&locked).expect("mkdir");
+    fs::write(locked.join("secret.bin"), vec![7u8; 32 * 1024]).expect("write");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod");
+
+    let tree = diskguardian_core::scan(dir.path(), &Default::default()).expect("scan");
+    let root = tree.root as u64;
+    let total = tree.total_bytes();
+    std::mem::forget(dir);
+
+    let ctx = VolumeScan {
+        mount: PathBuf::from("/"),
+        purgeable,
+        measured_at: 1_790_000_000,
+    };
+    let scan_id = app.state::<AppState>().insert_with(tree, Some(ctx));
+    (scan_id, root, total, locked)
+}
+
+#[test]
+fn hidden_space_of_an_unknown_scan_is_a_typed_error() {
+    let app = build();
+    let webview = webview(&app);
+
+    let result = call(
+        &webview,
+        "hidden_space",
+        serde_json::json!({ "scanId": "nope" }),
+    );
+    assert!(result.is_err(), "must reject an unknown scan");
+    assert!(
+        result.unwrap_err().to_string().contains("unknown scan"),
+        "the error must name the failure"
+    );
+}
+
+/// A folder scan is not a volume scan: no anchor on the response, and the panel command
+/// refuses in words. Drives the real `scan` command so the volume detection itself is
+/// what is under test.
+#[test]
+fn a_folder_scan_reports_no_anchor() {
+    let app = build();
+    let webview = webview(&app);
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("payload.bin"), vec![7u8; 64 * 1024]).expect("write");
+
+    let response = call(
+        &webview,
+        "scan",
+        serde_json::json!({ "path": dir.path().display().to_string(), "nonce": "n1" }),
+    )
+    .expect("scan must succeed");
+
+    assert_eq!(
+        response["volume"],
+        serde_json::Value::Null,
+        "a folder scan carries no volume summary: {response}"
+    );
+
+    let scan_id = response["scan_id"].as_str().expect("scan id");
+    let refusal = call(
+        &webview,
+        "hidden_space",
+        serde_json::json!({ "scanId": scan_id }),
+    )
+    .expect_err("hidden space applies to volumes, not folders")
+    .to_string();
+    assert!(
+        refusal.contains("not a volume scan"),
+        "the refusal must say what is wrong: {refusal}"
+    );
+
+    let view = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": scan_id, "nodeId": null }),
+    )
+    .expect("view");
+    assert!(
+        view.as_array()
+            .expect("array")
+            .iter()
+            .all(|node| node["kind"] != "hidden"),
+        "no anchor means no hidden petal: {view}"
+    );
+}
+
+/// The held state's payload expectations, shared by every hidden-space test: the panel's
+/// words ride the report, and none of the decomposition's categories exist as fields —
+/// held means a category can be rendered neither as a figure nor as a zero.
+fn assert_decomposition_held(report: &serde_json::Value) {
+    let note = report["decomposition_held_note"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    assert!(
+        note.contains("held") && note.contains("cross-check"),
+        "the held note says, in plain words, that the breakdown is held pending the \
+         external-volume cross-check: {report}"
+    );
+    let keys = report.as_object().expect("the report is an object");
+    for category in [
+        "other_volumes",
+        "snapshot_count",
+        "snapshot_note",
+        "restricted_roots",
+        "still_hidden_bytes",
+    ] {
+        assert!(
+            !keys.contains_key(category),
+            "while held, {category} is not in the payload at all — an absent field cannot \
+             be rendered as zero: {report}"
+        );
+    }
+}
+
+#[test]
+fn hidden_space_carries_the_anchor_the_held_note_and_the_wording() {
+    let app = build();
+    let webview = webview(&app);
+    let used = 10 * 1024 * 1024;
+    let (scan_id, root, tree_total, locked) = seed_volume_scan(&app, used, true, Some(150_000));
+
+    let report = call(
+        &webview,
+        "hidden_space",
+        serde_json::json!({ "scanId": scan_id }),
+    )
+    .expect("hidden_space");
+
+    assert_eq!(
+        report["used_bytes"].as_u64(),
+        Some(used),
+        "the anchor, fresh"
+    );
+    assert_eq!(
+        report["tree_bytes"].as_u64(),
+        Some(tree_total),
+        "the tree's own total, unchanged"
+    );
+    assert_eq!(
+        report["hidden_bytes"].as_i64(),
+        Some((used as i64) - (tree_total as i64)),
+        "the residual is exactly used − tree"
+    );
+
+    // The decomposition is held even though the probe seam can still supply a container
+    // report: holding is the payload's decision, not an accident of a probe returning
+    // nothing (the seed above injects a canned container through the seam).
+    assert_decomposition_held(&report);
+
+    let purgeable_note = report["purgeable_note"].as_str().unwrap_or_default();
+    assert!(
+        purgeable_note.contains("up to"),
+        "purgeable is an upper bound, never a promise: {purgeable_note}"
+    );
+    assert!(purgeable_note.contains("Not part of the hidden figure"));
+
+    assert_eq!(
+        report["negative_note"],
+        serde_json::Value::Null,
+        "a positive residual carries no negative note: {report}"
+    );
+
+    // The root view draws the petal at exactly the residual, and the root reports the
+    // anchor, so the ring sums to the volume.
+    let view = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": scan_id, "nodeId": root }),
+    )
+    .expect("view");
+    let nodes = view.as_array().expect("array");
+    let hidden = nodes
+        .iter()
+        .find(|node| node["kind"] == "hidden")
+        .expect("the hidden petal is drawn");
+    assert_eq!(
+        hidden["bytes"].as_i64(),
+        Some((used as i64) - (tree_total as i64)),
+        "the petal is the residual at the moment of projection: {view}"
+    );
+    assert_eq!(hidden["node_id"], serde_json::Value::Null);
+    assert_eq!(
+        view[0]["bytes"].as_u64(),
+        Some(used),
+        "the root reports the anchor"
+    );
+
+    let _ = root;
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("restore");
+}
+
+#[test]
+fn a_negative_residual_is_words_not_a_zero_petal() {
+    let app = build();
+    let webview = webview(&app);
+    let (scan_id, root, tree_total, locked) = seed_volume_scan(&app, 1024, true, None);
+
+    let report = call(
+        &webview,
+        "hidden_space",
+        serde_json::json!({ "scanId": scan_id }),
+    )
+    .expect("hidden_space still answers");
+
+    assert_eq!(
+        report["hidden_bytes"].as_i64(),
+        Some(1024 - (tree_total as i64)),
+        "the residual is signed and unclamped: {report}"
+    );
+    let note = report["negative_note"].as_str().unwrap_or_default();
+    assert!(
+        !note.is_empty() && note.to_lowercase().contains("rescan"),
+        "a negative residual carries words, not a silent zero: {note}"
+    );
+    // The held state holds through a negative residual too: the words carry the state,
+    // and no decomposition figure survives as a number dressed as a measurement.
+    assert_decomposition_held(&report);
+
+    let view = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": scan_id, "nodeId": root }),
+    )
+    .expect("view");
+    assert!(
+        view.as_array()
+            .expect("array")
+            .iter()
+            .all(|node| node["kind"] != "hidden"),
+        "no zero-width petal: {view}"
+    );
+
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("restore");
+}
+
+/// The self-correcting property, end to end: the tree shrinks by exactly the deleted
+/// bytes and the hidden petal grows by exactly the same amount in the same response —
+/// no rescan, because the residual is computed at projection time.
+#[test]
+fn deleting_grows_the_hidden_petal_by_exactly_the_freed_bytes() {
+    let app = build();
+    let webview = webview(&app);
+    let used = 10 * 1024 * 1024;
+    let (scan_id, root, tree_total, locked) = seed_volume_scan(&app, used, false, None);
+
+    let before = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": scan_id, "nodeId": root }),
+    )
+    .expect("view before");
+    let hidden_before = before
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|node| node["kind"] == "hidden")
+        .expect("the petal exists before the delete")["bytes"]
+        .as_u64()
+        .expect("bytes");
+
+    let child = child_named(&webview, &scan_id, root, "sub");
+    call(
+        &webview,
+        "collect",
+        serde_json::json!({ "scanId": scan_id, "nodeId": child, "add": true }),
+    )
+    .expect("collect");
+
+    let report = call(
+        &webview,
+        "delete_collected",
+        serde_json::json!({ "scanId": scan_id, "nodeId": root, "permanent": false, "confirmed": true }),
+    )
+    .expect("delete");
+
+    // The existing C17 test pins the tree arithmetic (exactly 65536); this pins the
+    // residual side of the same response.
+    let summary = &report["volume"];
+    assert_eq!(
+        summary["used_bytes"].as_u64(),
+        Some(used),
+        "the anchor is unchanged (nothing touched the volume figure): {report}"
+    );
+    assert_eq!(
+        summary["hidden_bytes"].as_i64(),
+        Some((used as i64) - (tree_total as i64) + 65_536),
+        "the residual grew by exactly the freed bytes: {report}"
+    );
+    let hidden_after = report["view"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|node| node["kind"] == "hidden")
+        .expect("the petal is still drawn after the delete")["bytes"]
+        .as_u64()
+        .expect("bytes");
+    assert_eq!(
+        hidden_after - hidden_before,
+        65_536,
+        "the petal grew by exactly the freed bytes, in the same response"
+    );
+
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("restore");
+}

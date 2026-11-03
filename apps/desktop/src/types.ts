@@ -3,12 +3,22 @@ export interface ViewNode {
   node_id: number | null
   name: string
   bytes: number
-  kind: 'dir' | 'file' | 'symlink' | 'restricted' | 'aggregate' | 'measuring'
+  kind: 'dir' | 'file' | 'symlink' | 'restricted' | 'aggregate' | 'measuring' | 'hidden'
   children: number[]
   aggregated_count: number
   partial: boolean
   /** Gone from disk since the scan: drawn struck through, worth zero. */
   missing: boolean
+}
+
+/**
+ * Volume-level figures for a volume scan (C29), carried on every view-returning
+ * response. `hidden_bytes` is `used − tree`, signed: negative means the disk changed
+ * during or after the scan, and the panel says so in words rather than drawing anything.
+ */
+export interface VolumeSummary {
+  used_bytes: number
+  hidden_bytes: number
 }
 
 export interface ScanResponse {
@@ -21,6 +31,8 @@ export interface ScanResponse {
   errors: number
   partial: boolean
   view: ViewNode[]
+  /** Present iff the scan root was a mount point. */
+  volume: VolumeSummary | null
 }
 
 export interface CollectState {
@@ -119,6 +131,7 @@ export interface FreshnessReport {
   bytes: number
   files: number
   view: ViewNode[]
+  volume: VolumeSummary | null
 }
 
 export interface BranchDone {
@@ -149,6 +162,7 @@ export interface DeleteReport {
   view: ViewNode[]
   bytes: number
   files: number
+  volume: VolumeSummary | null
 }
 
 /** What an administrator measurement pass did to the stored tree. */
@@ -160,6 +174,7 @@ export interface AdminScanReport {
   bytes: number
   files: number
   view: ViewNode[]
+  volume: VolumeSummary | null
 }
 
 export interface AdminProgress {
@@ -185,4 +200,29 @@ export interface FavouritesReport {
 export interface FavouriteMarks {
   self_: boolean
   children: number[]
+}
+
+/**
+ * The hidden-space report of one volume scan (C29, narrowed 2026-11-03): the residual
+ * ships, the decomposition is held. The held note is the panel's words for that state;
+ * the decomposition's categories are not fields at all, so no category can be rendered
+ * as a figure or as a zero. `purgeable_bytes: null` means unmeasured, never zero;
+ * `negative_note` rides any negative residual so it can never be shown as a silent
+ * zero.
+ */
+export interface HiddenSpaceReport {
+  mount: string
+  /** The volume's used space, measured now (the anchor). */
+  used_bytes: number
+  tree_bytes: number
+  /** `used − tree`, signed and unclamped. */
+  hidden_bytes: number
+  /** The held decomposition's words, verbatim from the backend. */
+  decomposition_held_note: string
+  purgeable_bytes: number | null
+  purgeable_note: string | null
+  /** Mounts the volume boundary did not enter, listed rather than silently skipped. */
+  skipped_mounts: string[]
+  measured_at: number
+  negative_note: string | null
 }

@@ -456,6 +456,11 @@ fn measure(path: &Path, deadline: Instant) -> Tree {
         // handed back as a restricted *measurement* and grafted as one. Cancellation is not
         // a measurement and must not become one.
         cancel: None,
+        // The helper measures one restricted path at a time: no device bound (a
+        // restricted root may itself sit at a mount edge) and no prefix exclusions —
+        // the caller asked for exactly this path.
+        same_device_only: false,
+        exclude_prefixes: Vec::new(),
     };
     match scan(path, &opts) {
         Ok(tree) => tree,
@@ -485,6 +490,7 @@ fn measure(path: &Path, deadline: Instant) -> Tree {
             scanned_root: path.to_path_buf(),
             duration_ms: 0,
             errors: 1,
+            skipped_mounts: Vec::new(),
         },
     }
 }

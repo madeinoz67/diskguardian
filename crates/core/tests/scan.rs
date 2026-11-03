@@ -195,6 +195,7 @@ fn an_expired_deadline_reports_restricted_nodes_never_zero() {
             max_entries: None,
             deadline: Some(spent),
             cancel: None,
+            ..Default::default()
         },
     )
     .expect("scan must still succeed");

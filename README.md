@@ -113,6 +113,39 @@ What that pass is, plainly:
   is granted Full Disk Access. Whatever could not be measured is reported with a count,
   never silently dropped.
 
+## Hidden space
+
+A scan of a **volume** (its root is a mount point — the startup disk, an external disk)
+does not stop at the flower. The volume's own used space is measured fresh at every
+view, and the gap between that figure and everything the scan could see is drawn as one
+**Hidden space** petal — its width is always exactly `volume used − scanned tree` at
+the moment you are looking at it, so deleting files grows it in the same frame, with no
+rescan.
+
+Click the petal and the panel says what the figure is, and what it is not:
+
+- **The hidden figure is measured.** It is the volume's used space (statfs — the figure
+  `df` prints) minus the scanned tree. If the tree ever totals *more* than the volume
+  reports used — the disk changed during or after the scan — the petal is omitted and
+  the panel says so in words, never a silent zero.
+- **The breakdown is held.** The gap could in principle be split into other volumes of
+  the same APFS container, local snapshots, protected areas, and a still-hidden
+  remainder. That split is **not shown**: the acceptance rule that was written before
+  any measurement could not confirm it on a second volume, so no category is presented
+  at all — an unshown category can never be mistaken for an empty one. The measuring
+  code is kept and tested in the app's volume module, waiting on that cross-check.
+- **Purgeable space is an annotation, not a slice.** macOS also reports how much it
+  *may* free on its own (snapshots, caches, offloaded content). That pool overlaps
+  space the scan already counts, so it is shown beside the figure as "up to N" — never
+  as part of the hidden figure, and nothing in this app offers to purge it. The only
+  purges are the ones you ask for yourself: your snapshots (as you, not elevated) and
+  your Trash.
+
+A volume scan also stays on its own disk: it walks only the scanned volume's device
+(the startup volume's System and Data volumes count as one, because macOS presents them
+as one), never enters other disks or transient snapshot mounts, and lists the mounts it
+excluded.
+
 ## Favourite folders
 
 Any folder you keep coming back to can be starred, and the favourites then sit at the

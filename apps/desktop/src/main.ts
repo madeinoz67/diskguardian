@@ -13,6 +13,8 @@ import { duplicatesModel } from './duplicates'
 import type { DuplicateGroupModel } from './duplicates'
 import { purgeMessage, snapshotsModel } from './snapshots'
 import type { SnapshotsModel } from './snapshots'
+import { hiddenModel } from './hidden'
+import type { HiddenModel } from './hidden'
 import { favouritesModel, framesInvalidatedByStarToggle } from './favourites'
 import type { FavouriteRowModel } from './favourites'
 
@@ -51,13 +53,17 @@ const snapshotsNote = el<HTMLElement>('snapshots-note')
 const snapshotsMessage = el<HTMLElement>('snapshots-message')
 const snapshotsList = el<HTMLElement>('snapshots-list')
 const snapshotsPurge = el<HTMLButtonElement>('snapshots-purge')
+const hiddenPanel = el<HTMLElement>('hidden')
+const hiddenHeadline = el<HTMLElement>('hidden-headline')
+const hiddenNote = el<HTMLElement>('hidden-note')
+const hiddenList = el<HTMLElement>('hidden-list')
 
 /**
- * The three fullscreen overlays describe one thing at a time. Opening one closes the
+ * The fullscreen overlays describe one thing at a time. Opening one closes the
  * others, so they can never stack — a refusal message from one panel must not be read as
  * the answer to a question asked in another.
  */
-const overlays = [cleanupPanel, duplicatesPanel, snapshotsPanel]
+const overlays = [cleanupPanel, duplicatesPanel, snapshotsPanel, hiddenPanel]
 
 function openOverlay(panel: HTMLElement): void {
   for (const other of overlays) other.hidden = other !== panel
@@ -564,6 +570,17 @@ function renderLegend(): void {
     row.append(dot, name, size)
 
     // A symlink is a pointer someone placed on purpose: never offered for collection.
+    // The hidden petal is synthetic (no id): its row opens the hidden-space panel
+    // instead of navigating, exactly as the petal's click does.
+    if (node.kind === 'hidden') {
+      row.title =
+        'Space on this volume the scan could not see. Click for the measured figure and what is held.'
+      row.addEventListener('click', () => {
+        openOverlay(hiddenPanel)
+        void refreshHiddenSpace()
+      })
+    }
+
     if (node.node_id !== null && node.kind !== 'symlink') {
       const collectButton = document.createElement('button')
       const nodeId = node.node_id
@@ -708,11 +725,13 @@ function updateHoverLabel(arc: Arc | null): void {
   const kind =
     node.kind === 'restricted'
       ? 'restricted'
-      : node.kind === 'aggregate'
-        ? `${node.aggregated_count} items`
-        : node.kind === 'file'
-          ? 'file'
-          : 'folder'
+      : node.kind === 'hidden'
+        ? 'hidden space'
+        : node.kind === 'aggregate'
+          ? `${node.aggregated_count} items`
+          : node.kind === 'file'
+            ? 'file'
+            : 'folder'
   // textContent, never markup: `node.name` is a disk-derived string, and a folder
   // named to look like HTML is data, not a document. This label previously built its
   // content with an HTML template string — a pre-existing defect, folded here because
@@ -826,6 +845,13 @@ canvas.addEventListener('pointerup', (event) => {
   if (branches && node) {
     pendingDrill = node.name
     setStatus(`Opening ${node.name} as soon as it is measured…`)
+    return
+  }
+
+  // The hidden petal has no node id and nowhere to navigate: its click is the panel.
+  if (node?.kind === 'hidden') {
+    openOverlay(hiddenPanel)
+    void refreshHiddenSpace()
     return
   }
 
@@ -1204,6 +1230,9 @@ async function boot(): Promise<void> {
   el<HTMLButtonElement>('snapshots-close').addEventListener('click', () => {
     snapshotsPanel.hidden = true
   })
+  el<HTMLButtonElement>('hidden-close').addEventListener('click', () => {
+    hiddenPanel.hidden = true
+  })
   el<HTMLButtonElement>('snapshots-run').addEventListener('click', () => void refreshSnapshots())
   snapshotsPurge.addEventListener('click', () => void purgeSnapshotsNow())
   el<HTMLButtonElement>('cleanup-close').addEventListener('click', () => {
@@ -1492,6 +1521,79 @@ async function refreshDuplicates(): Promise<void> {
     )
   } catch (error) {
     showError(`Duplicate search failed: ${String(error)}`)
+  }
+}
+
+// ─── hidden space ────────────────────────────────────────────────────────────────────
+//
+// The words live in hidden.ts, where they are tested: the decomposition is held and its
+// note is passed through verbatim (no category ever renders as a figure or a zero), a
+// negative residual is words rather than a zero-width petal, and purgeable is an "up
+// to" annotation. This half only builds the rows, with textContent — every path in the
+// panel is a disk-derived string.
+
+/** One titled block of lines in the hidden-space panel. */
+function hiddenSection(title: string): HTMLElement {
+  const section = document.createElement('section')
+  section.className = 'hidden-section'
+  const heading = document.createElement('h2')
+  heading.textContent = title
+  section.append(heading)
+  return section
+}
+
+function hiddenLine(text: string): HTMLElement {
+  const line = document.createElement('p')
+  line.className = 'hidden-line'
+  line.textContent = text
+  return line
+}
+
+function renderHiddenPanel(model: HiddenModel): void {
+  hiddenHeadline.textContent = model.headline
+  // A negative residual is a state, not a figure: the words replace the numbers and
+  // are styled as a warning, never folded into the headline.
+  hiddenNote.hidden = model.negativeNote === null
+  hiddenNote.textContent = model.negativeNote ?? ''
+  hiddenNote.classList.toggle('failed', model.negativeNote !== null)
+
+  hiddenList.replaceChildren()
+
+  // The decomposition is held, and this section says so in the backend's own words —
+  // never an empty section, and never a category rendered as a figure or a zero. The
+  // held note is the whole section until the external-volume cross-check un-holds it.
+  const held = hiddenSection('Breakdown')
+  held.append(hiddenLine(model.heldLine))
+  hiddenList.append(held)
+
+  if (model.purgeableLine !== null) {
+    const purgeable = hiddenSection('Purgeable space')
+    purgeable.append(hiddenLine(model.purgeableLine))
+    hiddenList.append(purgeable)
+  }
+
+  if (model.skippedLine !== null) {
+    const skipped = hiddenSection('Excluded mounts')
+    skipped.append(hiddenLine(model.skippedLine))
+    hiddenList.append(skipped)
+  }
+
+  if (model.measuredLine !== null) {
+    hiddenList.append(hiddenLine(model.measuredLine))
+  }
+}
+
+async function refreshHiddenSpace(): Promise<void> {
+  if (!state.scanId) return
+  hiddenHeadline.textContent = 'Reading the volume…'
+  hiddenNote.hidden = true
+  try {
+    renderHiddenPanel(hiddenModel(await bridge.hiddenSpace(state.scanId)))
+  } catch (error) {
+    hiddenHeadline.textContent = 'Hidden space'
+    hiddenNote.hidden = false
+    hiddenNote.textContent = `The breakdown could not be read: ${String(error)}`
+    hiddenNote.classList.add('failed')
   }
 }
 

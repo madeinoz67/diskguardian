@@ -3,10 +3,32 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+/// Volume-scan context (C29): present on a `Scan` iff its root was a mount point.
+/// The anchor itself is re-measured at every projection (one statfs); only the
+/// slow-moving scan-time measurement (the purgeable annotation) is measured once, here,
+/// at scan completion.
+///
+/// The decomposition into other container volumes, the snapshot count and the protected
+/// areas is **held** (2026-11-03): its acceptance run was underpowered and the
+/// external-volume tie-breaker has not run, so none of it is measured, stored or sent —
+/// see [`crate::commands::DECOMPOSITION_HELD_NOTE`]. The parsers stay in
+/// [`crate::volume`] for the cross-check that can un-hold it.
+pub struct VolumeScan {
+    /// The mount the anchor is measured against — the scan root as requested.
+    pub mount: PathBuf,
+    /// "Up to N": an annotation beside the hidden figure, never a slice of it.
+    pub purgeable: Option<u64>,
+    /// Unix seconds of the scan-time measurement (the purgeable annotation), for the
+    /// "measured at scan time" line.
+    pub measured_at: u64,
+}
+
 pub struct Scan {
     pub tree: Tree,
     pub collector: Collector,
     pub scan_root: PathBuf,
+    /// `None` for a folder scan: no anchor, no boundary, no hidden node.
+    pub volume: Option<VolumeScan>,
 }
 
 #[derive(Default)]
@@ -32,11 +54,21 @@ pub struct AppState {
     /// directory lazily on first command use (`default()` runs before an `AppHandle`
     /// exists). The webview reaches it only through the four favourites commands.
     pub favourites: Mutex<crate::favourites::Favourites>,
+    /// Test seam for the volume probes (C29), the `admin_launch` pattern: when set,
+    /// the anchor and the decomposition probes read through these instead of the real
+    /// OS calls, so the hidden-space payload is assertable without a real volume.
+    /// Production leaves it `None`.
+    pub volume_probes: Mutex<Option<crate::volume::VolumeProbes>>,
 }
 
 impl AppState {
     /// Register a finished scan and return its id.
     pub fn insert(&self, tree: Tree) -> String {
+        self.insert_with(tree, None)
+    }
+
+    /// As [`insert`], carrying volume-scan context when the root was a mount point.
+    pub fn insert_with(&self, tree: Tree, volume: Option<VolumeScan>) -> String {
         let mut counter = self
             .next_scan
             .lock()
@@ -48,6 +80,7 @@ impl AppState {
             tree,
             collector: Collector::new(),
             scan_root,
+            volume,
         };
         self.scans
             .lock()

@@ -23,6 +23,19 @@ serde_json.workspace = true
 tauri-plugin-dialog = "2"
 sysinfo = { version = "0.36.1", default-features = false, features = ["disk"] }
 tempfile = "3"
+# Parses `diskutil apfs list -plist` as data. Already in the dependency tree via tauri;
+# the direct edge adds no crate.
+plist = "1.10"
+# The `statfs` call behind the volume anchor. Already in the dependency tree many
+# times over; the direct edge adds no crate.
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The two `NSURL` volume-capacity figures behind the purgeable annotation. Already in
+# the dependency tree many times over via tauri; the direct edge adds no crate, and
+# everything it needs (`NSURL`, `NSArray`, `NSDictionary`, `NSString`, `NSError`,
+# `NSNumber`) is in the default feature set.
+objc2-foundation = { version = "0.3" }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

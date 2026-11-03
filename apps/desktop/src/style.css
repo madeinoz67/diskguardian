@@ -974,3 +974,51 @@ body.dragging #sunburst {
 .legend-row .legend-size:where(:not(:empty)) {
   white-space: nowrap;
 }
+
+/* ── hidden-space panel (C29) ─────────────────────────────────────────────────── */
+
+#hidden {
+  position: fixed;
+  inset: var(--topbar-h) 0 var(--collector-h) 0;
+  z-index: 28;
+  background: #131315;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+}
+
+.hidden-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  max-width: 900px;
+}
+
+/* A negative residual is a state, not a figure: the warning styling the snapshots
+   failure note uses, so words that replace numbers are never read as data. */
+#hidden-note.failed {
+  color: #ffd9d6;
+  background: rgba(255, 69, 58, 0.1);
+  border: 1px solid rgba(255, 69, 58, 0.4);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.hidden-section {
+  margin: 0 0 16px;
+}
+
+.hidden-section h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.6;
+  margin: 0 0 6px;
+}
+
+.hidden-line {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
