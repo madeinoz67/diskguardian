@@ -532,11 +532,19 @@ A tagged release attaches installable artifacts for macOS arm64 + x86_64 (`.dmg`
 single-file artifacts named with their full target triples (the `.app` zips, the
 Windows setup, the Linux deb and AppImage), while the two macOS dmgs keep the bundler's
 per-architecture names (`aarch64` / `x64`), which cannot collide with any other asset;
-each verified before upload to contain, byte-identical by SHA-256, exactly the binaries
-that platform ships (macOS/Linux: app + helper; Windows: app only, with no
-`diskguardian-admin*` file anywhere in the payload); and the release body naming what
-each platform's OS will warn about (Gatekeeper, SmartScreen, unsigned deb / AppImage
-FUSE).
+each verified before upload to contain exactly the binaries that platform ships
+(macOS/Linux: app + helper; Windows: app only, with no `diskguardian-admin*` file
+anywhere in the payload) — byte-identical by SHA-256 on macOS, Windows and the Linux
+`.deb` (the build passes `--no-binary-patching`, so the bundler's in-place bundle-type
+rewrite never runs; macOS needs no flag, the bundler already skips macOS-native
+bundles) and, on the Linux `.AppImage` only, equal at ELF-content level: same machine,
+GNU build-id, interpreter and `DT_NEEDED` list, RUNPATH exactly `$ORIGIN/../lib`, and
+every section's content hash equal to the cargo build product except the
+bundler-owned `.dynstr`/`.dynamic` (linuxdeploy's RUNPATH injection and library
+deployment are intrinsic to the format — and a build-id survives all post-link
+mutation, so no single-file hash there would carry meaning); and the release body
+naming what each platform's OS will warn about (Gatekeeper, SmartScreen, unsigned deb /
+AppImage FUSE).
 
 On Windows, measuring restricted areas re-executes the app elevated (UAC `runas`), the
 elevated instance serves the unchanged job/results protocol and exits with the session,
@@ -548,7 +556,9 @@ that one pass until answered or the app exits, and no second prompt can stack.
 
 **Probe:** (CI arms, close on workflow evidence) the release workflow's per-leg Verify
 steps — expected-set hash equality plus the Windows negative assertion, hashes printed
-in the job log — the release lane's exact-count and duplicate-name assertions, and the
+in the job log; on Linux the AppImage arm's per-section sha256 manifest, build-id pair,
+RUNPATH and `NEEDED` comparison — the release lane's exact-count and duplicate-name
+assertions, and the
 post-tag download re-hash; the injected-launch IPC tests (decline maps to the exact
 refusal sentence with the tree untouched; one launch per app session; the classifier),
 run headless in CI.
@@ -562,7 +572,11 @@ never fires there; these arms cannot close on CI evidence and do not pretend to.
 expected set (or, on Windows, contains one outside it) by hash; any single-file asset
 named without its full triple, or a dmg name colliding with another asset; a tag whose
 draft release carries fewer assets than the matrix produces; a release body omitting a
-platform's warning; a second UAC prompt for a second pass in one app session; an
+platform's warning; an AppImage payload whose build-id, interpreter, `DT_NEEDED` list or
+any non-exempt section hash differs from the cargo build product, or whose RUNPATH is
+anything but exactly `$ORIGIN/../lib`; a `.deb` or NSIS payload that is not
+byte-identical (patching is off, so any difference names an unknown mutator and stops
+the release); a second UAC prompt for a second pass in one app session; an
 elevated instance still alive past its budgets after the parent dies.
 
 **Status:** opens `[ ]`. The CI arms close when the 0.1.1 tag is audited; the consent
@@ -658,6 +672,21 @@ shipped in the meantime.
   proves architecture for free and survives bundler renaming; the per-platform set plus
   the Windows negative assertion make "what ships" a decision the config makes and the
   pipeline enforces.
+- **Non-macOS payloads were never byte-identical; the fix removes the rewrite rather than
+  loosening the check** (2026-11-03, after run 41635246338). Tauri's bundler overwrites a
+  27-byte link-time placeholder (`__TAURI_BUNDLE_TYPE_VAR_UNK` → `_DEB`/`_APP`/`_NSS`) in
+  place at the cargo output path before each non-macOS bundle and restores it afterwards, so
+  the packaged main binary differed from the reference by exactly three bytes (measured:
+  offsets 733413–733415, `UNK`→`DEB`, no rpath entry either side). macOS passed only because
+  the bundler skips macOS-native bundles, and the sidecar matched everywhere because sidecars
+  are copied, never patched. linuxdeploy separately rewrites **both** AppImage binaries with
+  `RUNPATH $ORIGIN/../lib`, growing them. The rejected alternative was a bounded carve-out
+  permitting the three-byte slot; a permitted deviation is a claim that has to be explained at
+  every review. The accepted fix is `--no-binary-patching`, which makes the `.deb` and NSIS
+  genuinely byte-identical and costs only per-bundle-type updater support — a feature this
+  project does not ship, reopen if an updater is ever adopted. The AppImage keeps an
+  ELF-content check because its rewrite is intrinsic to the format. A GNU build-id survives all
+  post-link mutation, so it is a necessary condition and never an integrity check.
 
 ## Roadmap — DaisyDisk parity (opened 2026-11-02)
 
@@ -728,6 +757,26 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-03 — Multi-platform release, amendment 2, consuming no Stage A iteration: the Linux
+  verification failure is root-caused and the premise corrected instead of weakened. The mutator
+  is Tauri's bundler itself — `patch_binary` in `crates/tauri-bundler/src/bundle.rs` at
+  `tauri-cli-v2.12.4` rewrites the 27-byte `__TAURI_BUNDLE_TYPE_VAR_UNK` placeholder in place at
+  the cargo output path before each non-macOS bundle and restores the original afterwards. The
+  run's own `cmp -l` was complete and is the whole proof: exactly three bytes, 733413–733415,
+  `125 116 113` → `104 105 102`, `UNK`→`DEB`, with the sidecar matching by hash on the very next
+  line because sidecars are copied rather than patched. linuxdeploy then rewrites both AppImage
+  binaries with `RUNPATH $ORIGIN/../lib`, growing the app by 33,825 B and the sidecar by 6,169 B.
+  **A GNU build-id survives all post-link mutation** — the deb and AppImage copies share
+  `06c35623…` while both differ from the reference and from each other — so it can never be an
+  integrity check, only a necessary condition. Correction: `--no-binary-patching` (its only cost
+  is per-bundle-type updater support, and this project ships no updater), which makes the `.deb`
+  and NSIS byte-identical exactly as C30 originally said, leaving the AppImage on an ELF-content
+  check — machine, build-id, interpreter, `DT_NEEDED`, RUNPATH asserted exactly
+  `$ORIGIN/../lib`, section-name set, and every section hash equal except the bundler-owned
+  `.dynstr`/`.dynamic`. `R-mutate` tightens to two named mutations, one byte inside `.text` and
+  one inside `.rodata`; the residual blind spot, bytes outside every section, is stated rather
+  than hidden. Iteration cap: 2 spent, the amendment spends none.
 
 - 2026-11-03 — Multi-platform release, Stage A attempt 2 of a pre-committed 5: **the same two
   legs failed, for two new reasons**, and the adversary lane returned a HIGH that outranks both.
