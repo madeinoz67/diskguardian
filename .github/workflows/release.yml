@@ -3,14 +3,20 @@ name: Release
 # Two lanes on purpose:
 #
 #   build   — runs on every dispatch and every tag, publishes nothing. It produces the
-#             per-architecture bundles and asserts they contain what they must, so the
+#             per-platform bundles and asserts they contain what they must, so the
 #             pipeline can be proven without a public release existing.
 #   release — tags only. Takes the artifacts the build lane produced and attaches them to
 #             a draft release. Nothing here rebuilds, so what ships is what was verified.
 #
-# Both macOS architectures are built. The app is unsigned (there is no signing identity),
-# so a downloaded bundle is quarantined by Gatekeeper; that is stated in the release body
-# rather than left for the user to discover.
+# Four legs, one per target triple (multi-platform release design §3.1, amended
+# 2026-11-03): macOS arm64 + x86_64, Windows x86_64 (NSIS, app binary ONLY — no
+# sidecar), Linux x86_64 (deb + AppImage, sidecar ships). Each leg builds its own host
+# triple — no cross-compilation — and verifies its payload against the binaries cargo
+# built for that triple, by SHA-256, against that platform's expected set.
+#
+# Everything is unsigned (there is no signing identity): Gatekeeper, SmartScreen and
+# unsigned-deb warnings are stated in the release body rather than left for the user
+# to discover.
 
 on:
   push:
@@ -23,13 +29,23 @@ permissions:
 jobs:
   build:
     name: Bundle (${{ matrix.target }})
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - aarch64-apple-darwin
-          - x86_64-apple-darwin
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            bundles: app,dmg
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            bundles: app,dmg
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            bundles: nsis
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            bundles: deb,appimage
     steps:
       - uses: actions/checkout@v4
 
@@ -47,24 +63,49 @@ jobs:
             .
             apps/desktop/src-tauri
 
+      # The exact webview set CI already proves, plus nothing speculative
+      # (design §3.2). If the AppImage step still trips over FUSE on a newer
+      # ubuntu, the named remediation is `sudo apt-get install -y libfuse2t64`.
+      - name: Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf
+
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: bun install --frozen-lockfile
 
       # Tauri's externalBin needs the helper under the target triple, and
       # `beforeBuildCommand` only builds the frontend — so the helper is staged here,
-      # explicitly, for the architecture being bundled.
+      # explicitly, for the architecture being bundled. Windows ships no sidecar
+      # (maintainer ruling, 2026-11-03): its bundle config has no externalBin, so there
+      # is nothing to stage and the leg skips this entirely.
       - name: Stage the measurement helper
+        if: runner.os != 'Windows'
         working-directory: apps/desktop
         run: bun run stage:admin --target ${{ matrix.target }}
 
+      # APPIMAGE_EXTRACT_AND_RUN makes the bundler's linuxdeploy (itself an AppImage)
+      # run without FUSE on the runner; a no-op on the other legs.
       - name: Build the bundle
         working-directory: apps/desktop
-        run: bunx tauri build --target ${{ matrix.target }} --bundles app,dmg
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: bunx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
-      # The release is worthless if it ships without the privileged helper or built for
-      # the wrong architecture, and neither failure would be visible after upload.
-      - name: Verify the bundle contains what it must
+      # ── Verification, per platform ─────────────────────────────────────────────
+      # The rule each leg enforces (design §3.3): the packaged payload contains, by
+      # SHA-256 equal to the cargo build products under target/<triple>/release/,
+      # every binary in that platform's expected set — and, on Windows, no binary
+      # outside it. Hash equality proves presence, correctness AND architecture in one
+      # check, and does not care what the bundler renamed the main binary to inside
+      # each format. Every compared hash is printed: those lines are the evidence
+      # Stage B checks against.
+
+      - name: Verify the bundle contains what it must (macOS)
+        if: runner.os == 'macOS'
         working-directory: apps/desktop
         run: |
           set -euo pipefail
@@ -85,16 +126,106 @@ jobs:
           DMG="$(ls ../../target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)"
           test -s "$DMG" || { echo "no dmg produced"; exit 1; }
           echo "dmg: $DMG"
+          # Content identity, not just presence: each shipped binary must be
+          # byte-identical to the one cargo built for this triple.
+          for bin in diskguardian-app diskguardian-admin; do
+            REF="$(sha256sum "../../target/${{ matrix.target }}/release/$bin" | cut -d' ' -f1)"
+            PAY="$(sha256sum "$APP/Contents/MacOS/$bin" | cut -d' ' -f1)"
+            echo "verify $bin reference sha256: $REF"
+            echo "verify $bin in-payload sha256: $PAY"
+            [ "$REF" = "$PAY" ] || { echo "$bin inside the bundle is not the binary cargo built"; exit 1; }
+          done
+
+      # `shell: bash` on every Windows step: the runner default is pwsh, and the
+      # bash idioms below (set -euo pipefail, process substitution) fail in it
+      # confusingly rather than usefully.
+      - name: Verify the installer contains exactly what Windows ships (app only)
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          REF_DIR="../../target/${{ matrix.target }}/release"
+          REF="$(sha256sum "$REF_DIR/diskguardian-app.exe" | cut -d' ' -f1)"
+          echo "reference diskguardian-app.exe sha256: $REF"
+          SETUP="$(ls "$REF_DIR/bundle/nsis/"*-setup.exe | head -1)"
+          test -s "$SETUP" || { echo "no nsis setup produced"; exit 1; }
+          echo "setup: $SETUP"
+          rm -rf payload && mkdir payload
+          # 7z extracts the NSIS payload without running the installer. (Fallback if
+          # this ever drifts: silent-install to a scratch dir — setup.exe /S /D=... —
+          # which is stronger evidence anyway, just slower.)
+          7z x -y "$SETUP" -opayload >/dev/null
+          # Positive: the app binary cargo built is present by hash, whatever the
+          # bundler renamed it to inside the installer.
+          FOUND=""
+          while IFS= read -r -d '' f; do
+            H="$(sha256sum "$f" | cut -d' ' -f1)"
+            echo "payload $(basename "$f") sha256: $H"
+            if [ -z "$FOUND" ] && [ "$H" = "$REF" ]; then FOUND="$f"; fi
+          done < <(find payload -type f -print0)
+          test -n "$FOUND" || { echo "the installer payload does not contain the app binary cargo built"; exit 1; }
+          echo "app binary present by hash: $FOUND"
+          # Negative — the ruling, machine-enforced: no admin helper may appear
+          # anywhere in the payload under any casing. A config-merge regression or a
+          # stale staged sidecar cannot quietly re-ship the helper (design §3.3).
+          NEG="$(find payload -iname 'diskguardian-admin*' | wc -l | tr -d ' ')"
+          echo "payload entries matching diskguardian-admin* (case-insensitive): $NEG"
+          if [ "$NEG" != "0" ]; then
+            find payload -iname 'diskguardian-admin*'
+            echo "the Windows payload must ship the app binary ONLY (maintainer ruling, 2026-11-03)"
+            exit 1
+          fi
+
+      - name: Verify the bundles contain what they must (Linux)
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          REF_DIR="../../target/${{ matrix.target }}/release"
+          declare -A REF
+          for bin in diskguardian-app diskguardian-admin; do
+            REF[$bin]="$(sha256sum "$REF_DIR/$bin" | cut -d' ' -f1)"
+            echo "reference $bin sha256: ${REF[$bin]}"
+          done
+          check_dir() {
+            local dir="$1" label="$2" bin hit f
+            for bin in diskguardian-app diskguardian-admin; do
+              hit=""
+              while IFS= read -r -d '' f; do
+                if [ "$(sha256sum "$f" | cut -d' ' -f1)" = "${REF[$bin]}" ]; then hit="$f"; break; fi
+              done < <(find "$dir" -type f -print0)
+              test -n "$hit" || { echo "$bin not found by hash in the $label"; exit 1; }
+              echo "$label: $bin present by hash ($hit)"
+            done
+          }
+          DEB="$(ls "$REF_DIR/bundle/deb/"*.deb | head -1)"
+          test -s "$DEB" || { echo "no deb produced"; exit 1; }
+          echo "deb: $DEB"
+          rm -rf debx && mkdir debx
+          dpkg-deb -x "$DEB" debx
+          check_dir debx ".deb payload"
+          APPIMG="$(ls "$REF_DIR/bundle/appimage/"*.AppImage | head -1)"
+          test -s "$APPIMG" || { echo "no AppImage produced"; exit 1; }
+          echo "appimage: $APPIMG"
+          APPIMG_ABS="$(cd "$(dirname "$APPIMG")" && pwd)/$(basename "$APPIMG")"
+          rm -rf appx && mkdir appx
+          # Type-2 extraction needs no FUSE.
+          (cd appx && "$APPIMG_ABS" --appimage-extract >/dev/null)
+          check_dir appx/squashfs-root "AppImage payload"
 
       - uses: actions/upload-artifact@v4
         with:
           name: diskguardian-${{ matrix.target }}
-          # This is a cargo workspace: the bundle lands in the ROOT target, not under
-          # apps/desktop/src-tauri. The first draft of this workflow pointed at the
-          # src-tauri path and the verify step failed on a bundle that had built fine.
+          # Every glob is triple-prefixed, so a leg can only ever match its own
+          # products; `if-no-files-found: error` then makes a leg that produced none of
+          # its bundles fail the upload rather than ship a hole.
           path: |
             target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             target/${{ matrix.target }}/release/bundle/macos/*.app
+            target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
+            target/${{ matrix.target }}/release/bundle/deb/*.deb
+            target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
   release:
@@ -128,16 +259,41 @@ jobs:
             fi
             ditto -c -k --sequesterRsrc --keepParent "$app" "out/${name}-${suffix}.zip"
           done
+          # The single-file bundles from the new legs, renamed by the same triple rule
+          # (design §3.5): the bundler's own names embed short arch names and versions,
+          # which is how collisions happen.
+          find artifacts -name '*-setup.exe' -type f | while read -r exe; do
+            suffix="$(echo "$exe" | sed -E 's#^artifacts/diskguardian-##; s#/.*##')"
+            cp "$exe" "out/DiskGuardian-${suffix}-setup.exe"
+          done
+          for pat in '*.deb' '*.AppImage'; do
+            find artifacts -name "$pat" -type f | while read -r f; do
+              suffix="$(echo "$f" | sed -E 's#^artifacts/diskguardian-##; s#/.*##')"
+              ext="${f##*.}"
+              cp "$f" "out/DiskGuardian-${suffix}.${ext}"
+            done
+          done
+          # The exact matrix-derived asset count (design §3.5): 4 targets ->
+          # 2 dmg + 2 triple-suffixed zip + 1 setup.exe + 1 deb + 1 AppImage.
+          # Change this number when the matrix changes.
+          EXPECTED=7
           count=$(ls -1 out | wc -l | tr -d ' ')
-          echo "collected $count artifact(s):"
+          echo "collected $count artifact(s), expected exactly $EXPECTED:"
           ls -la out
-          [ "$count" -ge 2 ] || { echo "expected at least a dmg per architecture"; exit 1; }
+          [ "$count" -eq "$EXPECTED" ] || { echo "expected exactly $EXPECTED assets"; exit 1; }
+          dups="$(ls out | sort | uniq -d)"
+          [ -z "$dups" ] || { echo "duplicate asset names: $dups"; exit 1; }
 
       - name: Create or update the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
+          # Per-platform blocks (design §3.6): each platform is told what its OS will
+          # actually warn about, including the Windows self-elevation behaviour new in
+          # 0.1.1 and the Linux not-yet for restricted-area measurement.
           NOTES: |
+            ## macOS
+
             Unsigned build: there is no signing identity for this project, so macOS will
             quarantine the download. After moving DiskGuardian to Applications, either
             right-click it and choose Open, or run:
@@ -147,6 +303,27 @@ jobs:
             The administrator measurement helper ships inside the app bundle and is only
             ever started by the app, behind the system's own consent dialog. It measures;
             it never deletes.
+
+            ## Windows
+
+            Unsigned build: SmartScreen will show "Windows protected your PC". Choose
+            *More info*, then *Run anyway*.
+
+            Measuring restricted areas asks Windows for administrator rights (one UAC
+            prompt per app session) — the app re-launches itself elevated to measure,
+            and the elevated copy only measures; it never deletes. Decline it and
+            everything else works, with those areas shown as restricted. This behaviour
+            is new in 0.1.1.
+
+            ## Linux
+
+            The .deb is unsigned: install it with
+            `sudo apt install ./DiskGuardian-x86_64-unknown-linux-gnu.deb` or
+            `sudo dpkg -i`. The AppImage needs FUSE, which some distributions omit;
+            `--appimage-extract-and-run` is the no-FUSE route.
+
+            Measuring restricted areas is not available on Linux yet; those areas stay
+            shown as restricted.
         run: |
           set -euo pipefail
           # --repo on every call: this job never checks out, so gh has no git context to
