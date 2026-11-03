@@ -41,11 +41,16 @@ fn main() {
     let fixture = tempfile::tempdir().expect("tempdir");
     std::fs::write(fixture.path().join("smoke.bin"), vec![7u8; 64 * 1024]).expect("fixture");
     // The job is staged before the launch so the child can serve it the moment it is
-    // up; the quoting matches the app's launcher (spaces in temp paths are normal).
-    let job = format!(
-        "{{\"version\":1,\"deadline_secs\":60,\"paths\":[\"{}\"]}}",
-        fixture.path().display()
-    );
+    // up. Built with serde_json, not format!: a Windows temp path is full of
+    // backslashes, which format! writes into the JSON unescaped — the first run of
+    // this smoke served that job a BAD_JOB refusal (exit 3) for exactly that reason,
+    // while proving everything else: elevation, the wrapper, the dispatch, readiness.
+    let job = serde_json::json!({
+        "version": 1,
+        "deadline_secs": 60,
+        "paths": [fixture.path().display().to_string()],
+    })
+    .to_string();
     std::fs::write(stage.path().join("job-1.json"), job).expect("job file");
 
     let exe = std::env::current_exe().expect("current exe");
