@@ -46,8 +46,8 @@ cannot collide with any other asset:
 
 | Platform | Artifacts |
 |---|---|
-| macOS (Apple silicon) | `DiskGuardian_0.1.1_aarch64.dmg`, `DiskGuardian-aarch64-apple-darwin.zip` |
-| macOS (Intel) | `DiskGuardian_0.1.1_x64.dmg`, `DiskGuardian-x86_64-apple-darwin.zip` |
+| macOS (Apple silicon) | `DiskGuardian_0.1.2_aarch64.dmg`, `DiskGuardian-aarch64-apple-darwin.zip` |
+| macOS (Intel) | `DiskGuardian_0.1.2_x64.dmg`, `DiskGuardian-x86_64-apple-darwin.zip` |
 | Windows (x86_64) | `DiskGuardian-x86_64-pc-windows-msvc-setup.exe` (NSIS installer) |
 | Linux (x86_64) | `DiskGuardian-x86_64-unknown-linux-gnu.deb`, `DiskGuardian-x86_64-unknown-linux-gnu.AppImage` |
 
