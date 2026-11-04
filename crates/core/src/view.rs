@@ -2,11 +2,15 @@
 //!
 //! A real home directory holds hundreds of thousands of nodes; a sunburst can only
 //! draw a few hundred petals legibly. The view keeps the large children, merges the
-//! long tail into one synthetic "smaller objects" petal (exactly as DaisyDisk does),
+//! long tail of *files* into one synthetic "smaller objects" petal (as DaisyDisk does),
 //! and stops at a ring depth the eye can still follow.
+//!
+//! Directories are never folded. Structure is how the user navigates, so an empty folder
+//! is still a place to go even though it holds no bytes.
 
-use crate::model::{NodeId, Tree};
+use crate::model::{NodeId, NodeKind, Tree};
 use serde::Serialize;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ViewNode {
@@ -172,30 +176,62 @@ fn push_node(
 
     let parent_bytes = node.total_bytes.max(1);
     let child_floor = (parent_bytes / MISSING_FLOOR_DIVISOR).max(1);
-    let mut kept: Vec<NodeId> = Vec::new();
+
+    // Structure is not space. A folder is how the user navigates, so it is never folded
+    // into the synthetic petal for being small: an empty `Documents` is still a place you
+    // can go, and on a real Windows profile the thirteen empty folders beside a dominant
+    // `AppData` were all folded away, leaving a home folder that looked like nothing but
+    // AppData. Only files are size-pruned, because files are where the space went.
+    //
+    // Two passes, then emit in size order. The structural pass reserves room for the
+    // folders first; the file pass spends what is left on the largest files. One pass
+    // would not do: a big file satisfies the coverage rule and breaks the loop before it
+    // ever reaches folders that sort after it on zero bytes.
+    let is_file = |id: NodeId| matches!(tree.node(id).kind, NodeKind::File);
+
+    let mut keep: HashSet<NodeId> = HashSet::new();
     let mut covered: u64 = 0;
 
     for &kid in &kids {
-        let enough = covered as f64 / parent_bytes as f64 >= opts.coverage;
-        let room = kept.len() < opts.max_children;
-        if !room || (enough && kept.len() >= 8) {
+        if keep.len() >= opts.max_children {
             break;
         }
-        kept.push(kid);
+        if !is_file(kid) {
+            keep.insert(kid);
+            covered = covered.saturating_add(tree.node(kid).total_bytes);
+        }
+    }
+
+    for &kid in &kids {
+        if keep.len() >= opts.max_children {
+            break;
+        }
+        if !is_file(kid) {
+            continue;
+        }
+        let enough = covered as f64 / parent_bytes as f64 >= opts.coverage;
+        if enough && keep.len() >= 8 {
+            break;
+        }
+        keep.insert(kid);
         covered = covered.saturating_add(tree.node(kid).total_bytes);
     }
 
-    let mut child_indices: Vec<u32> = kept
+    let mut child_indices: Vec<u32> = kids
         .iter()
+        .filter(|kid| keep.contains(kid))
         .map(|&kid| push_node(tree, kid, depth + 1, opts, child_floor, out))
         .collect();
 
-    let aggregated = kids.len().saturating_sub(kept.len());
+    let aggregated = kids.len().saturating_sub(keep.len());
     if aggregated > 0 {
-        let rest: u64 = kids[kids.len() - aggregated..]
+        // The folded bytes are everything not kept. `kept` is no longer a prefix of
+        // `kids`, so the remainder cannot be read off the tail of the slice.
+        let all_bytes: u64 = kids
             .iter()
             .map(|&kid| tree.node(kid).total_bytes)
-            .sum();
+            .fold(0u64, u64::saturating_add);
+        let rest = all_bytes.saturating_sub(covered);
         if rest > 0 || aggregated > 0 {
             let agg_index = out.len() as u32;
             out.push(ViewNode {

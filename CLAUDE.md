@@ -32,7 +32,9 @@ cd apps/desktop && bun run tauri:build   # the bundle
 - `crates/core/src/model.rs` — `own_bytes` (this node's own space) and `total_bytes`
   (own plus all children). The tree invariant `total = own + Σ children` is tested.
 - `crates/core/src/view.rs` — display pruning. Hundreds of thousands of nodes cannot be
-  drawn; big children are kept, the tail merges into one "smaller objects" petal.
+  drawn; big files are kept and the file tail merges into one "smaller objects" petal.
+  Directories are **never** folded, however small: an empty folder is still a place to go,
+  and folding them made a real Windows profile look like it held nothing but AppData.
 - `crates/core/src/delete.rs` — the guard. Narrow on purpose: it protects system trees, not
   the prefixes they live under, so the temp directory and Homebrew caches stay cleanable.
 - `apps/desktop/src/layout.ts` — pure geometry. No DOM. This is the testable half of the

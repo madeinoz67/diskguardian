@@ -615,6 +615,7 @@ shipped in the meantime.
 
 ## Decisions
 
+- **Structure is never pruned, only files are** (2026-11-04, principal elected after seeing it live). The view folded any child past 8 kept siblings once 99.5% of the parent was covered, which on a real Windows profile meant `AppData` filled the quota and the thirteen empty folders beside it — Documents, Downloads, Desktop, Pictures, Videos and the rest — all vanished into `smaller objects`. The disk was reporting its space correctly and still lying about what was there. Size pruning now folds files only; folders are kept to the `max_children` cap, which is still the hard bound. Two passes rather than one, because a big file otherwise satisfies the coverage rule and breaks the loop before reaching folders that sort after it on zero bytes.
 - **Tauri 2 + Rust core over egui or SwiftUI** (2026-10-30, principal elected). Rust owns scanning, tree building, deletion and macOS integration; the system webview owns the canvas. Chosen because visual fidelity to DaisyDisk is a rendering problem the web canvas solves directly, while the hard cross-platform part (physical-size accounting, traversal) stays portable Rust.
 - **Workspace, not one crate.** `crates/core` has no UI dependencies so it is unit-testable and reusable by a future CLI.
 - **Physical sizes via `st_blocks`.** `len()` would over-report sparse files and under-report block rounding.
