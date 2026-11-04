@@ -769,6 +769,19 @@ In scope eventually, too dim to state as claims today:
 
 ## Log
 
+- 2026-11-04 — Multi-platform release, Stage B: tag `v0.1.1` cut at `3544a6e` — the head that went
+  green, not `main`, which PR #3 has not reached, so the tag is not an ancestor of `main` until that
+  merge lands. The tag-triggered run (41745364730) went green on all four legs **including Attach to
+  the draft release**, and the draft "DiskGuardian v0.1.1" carries exactly the seven expected assets,
+  every one non-zero: two `.zip`, two `.dmg`, the Windows `-setup.exe`, the `.deb` and the
+  `.AppImage`. The single-file artifacts are triple-named and the two dmgs keep the bundler's
+  architecture names, which is what C30 now says. **Post-tag download re-hash:** the `.deb`
+  (`4bc1fc4e…`) and the `.AppImage` (`15223b1b…`) came back byte-identical to the digests the verify
+  step printed, so the attach step did not alter them. The other five carry no printed digest to
+  compare against, and that limit is stated rather than glossed. **C30 stays open:** this closes its
+  CI arms, but the consent arms wait on Stage H and no human has yet seen a UAC prompt from this
+  build. The draft is deliberately left unpublished.
+
 - 2026-11-04 — Multi-platform release, Stage A green and the RED controls run: **five of five pass
   as designed, after one partial found a defect in our own instrumentation rather than in the
   artifacts.**
