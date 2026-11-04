@@ -22,6 +22,7 @@ pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::home_dir,
+            commands::data_folders,
             commands::volumes,
             commands::scan,
             commands::cancel_scan,
