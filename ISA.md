@@ -769,8 +769,9 @@ In scope eventually, too dim to state as claims today:
 
 ## Log
 
-- 2026-11-04 — Multi-platform release, Stage A green and the RED controls run: **four pass, one
-  partial, and the partial found a defect in our own instrumentation rather than in the artifacts.**
+- 2026-11-04 — Multi-platform release, Stage A green and the RED controls run: **five of five pass
+  as designed, after one partial found a defect in our own instrumentation rather than in the
+  artifacts.**
   Stage A's honest green is iteration 7 (run 41736259266, all four legs, **zero MISS lines**, the
   only skips being the three named exemptions `.dynstr`, `.dynamic`, `.shstrtab`), with `.text`
   matching genuinely on both binaries and the deb byte-identical. PR #3's four CI lanes are green
@@ -789,9 +790,17 @@ In scope eventually, too dim to state as claims today:
   nominated `diskguardian-app.png` from the deb's icon tree, dumping 21,603 lines of cmp noise, and
   `printf '%s\n' "$DIFFS" | head -1` took SIGPIPE when head closed, which `pipefail` turned into
   exit 141 and `set -e` turned into a dead step. Measured locally: the pipe form returns 141, the
-  herestring form returns 0. Both are fixed in `bbd9e94`; m1 awaits one fresh dispatch from the
-  fixed head, and `.text` through the workflow is unproven until it runs, though it is proven
-  locally and m2 proves the same section-compare arm end-to-end in CI.
+  herestring form returns 0. Both are fixed in `bbd9e94`, and **m1 then re-ran and passed on both
+  arms** (run 41743288948, branch `red-mutate-text` at `91b422f`, one sabotage commit on
+  `cfe3ac9`): the diagnostic named the right candidate, `debx/usr/bin/diskguardian-app`, reported
+  "total differing bytes vs reference: 1", printed both 128-byte context dumps from offset
+  1577417, and the step **survived its own miss path** to reach the AppImage arm, which reported
+  `.text` reference `04a70e15…` against payload `5697f08f…`. That payload value is precisely what
+  the green runs print for the genuine `.text`, so the reference sits exactly one byte away from
+  what shipped — the control's whole claim, corroborated by the numbers rather than asserted. The
+  admin sidecar's sections then compared clean on the same run, so the step completed a full pass
+  with only its two designed failures. **The controls are five of five**: phantom (all four legs),
+  strip, neg, m1 and m2; the acceptance rule's RED precondition is satisfied on evidence.
 
 - 2026-11-03 — Multi-platform release, amendment 2, consuming no Stage A iteration: the Linux
   verification failure is root-caused and the premise corrected instead of weakened. The mutator
