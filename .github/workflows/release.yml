@@ -5,8 +5,9 @@ name: Release
 #   build   — runs on every dispatch and every tag, publishes nothing. It produces the
 #             per-platform bundles and asserts they contain what they must, so the
 #             pipeline can be proven without a public release existing.
-#   release — tags only. Takes the artifacts the build lane produced and attaches them to
-#             a draft release. Nothing here rebuilds, so what ships is what was verified.
+#   release — tags only. Takes the artifacts the build lane produced and publishes them as
+#             the release. Nothing here rebuilds, so what ships is what was verified, and
+#             publication is asserted from the API afterwards rather than assumed.
 #
 # Four legs, one per target triple (multi-platform release design §3.1, amended
 # 2026-11-03): macOS arm64 + x86_64, Windows x86_64 (NSIS, app binary ONLY — no
@@ -459,7 +460,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Attach to the draft release
+    name: Attach to the release
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-latest
@@ -522,7 +523,7 @@ jobs:
             [ "$size" -ge 1000000 ] || { echo "asset is below the 1,000,000-byte floor"; exit 1; }
           done < <(find out -type f -print0)
 
-      - name: Create or update the draft release
+      - name: Create the release and publish it
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -567,10 +568,34 @@ jobs:
           # --repo on every call: this job never checks out, so gh has no git context to
           # infer the repository from. Without it gh fails with "not a git repository"
           # after the artifacts were already collected.
+          #
+          # The tag IS the release: there is no manual publish step afterwards and no
+          # draft left behind. The asset set was verified above before this runs, and it
+          # is verified again below against what GitHub actually holds, so a partial
+          # upload fails this job rather than publishing a hole. A draft was the wrong
+          # default: it silently left "Latest" on the oldest release while every version
+          # surface on disk already read the new one.
           REPO="${{ github.repository }}"
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" out/* --repo "$REPO" --clobber
+            gh release edit "$TAG" --repo "$REPO" --draft=false
           else
-            gh release create "$TAG" out/* --repo "$REPO" --draft \
+            gh release create "$TAG" out/* --repo "$REPO" \
               --title "DiskGuardian $TAG" --notes "$NOTES"
           fi
+
+          # Prove it from the API, not from the staging directory: what `out/` holds is
+          # not evidence about what the release page serves.
+          EXPECTED=7
+          assets="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets | length')"
+          echo "release holds $assets asset(s), expected exactly $EXPECTED"
+          [ "$assets" -eq "$EXPECTED" ] || { echo "published asset count mismatch"; exit 1; }
+
+          small="$(gh release view "$TAG" --repo "$REPO" --json assets \
+            --jq '[.assets[] | select(.size < 1000000)] | length')"
+          echo "assets below the 1,000,000-byte floor: $small"
+          [ "$small" -eq 0 ] || { echo "a published asset is below the floor"; exit 1; }
+
+          draft="$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft')"
+          echo "draft: $draft"
+          [ "$draft" = "false" ] || { echo "the release is still a draft"; exit 1; }
