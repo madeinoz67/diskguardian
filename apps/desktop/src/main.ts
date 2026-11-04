@@ -15,6 +15,7 @@ import { purgeMessage, snapshotsModel } from './snapshots'
 import type { SnapshotsModel } from './snapshots'
 import { hiddenModel } from './hidden'
 import type { HiddenModel } from './hidden'
+import { pathPlaceholder } from './platform'
 import { favouritesModel, framesInvalidatedByStarToggle } from './favourites'
 import type { FavouriteRowModel } from './favourites'
 
@@ -1209,6 +1210,9 @@ async function unstarFavourite(path: string): Promise<void> {
 async function boot(): Promise<void> {
   try {
     homePath = await bridge.homeDir()
+    // The hint has to match the platform the home path just proved we are on: Windows does
+    // not expand `~`, so the POSIX example promises a path that cannot work there.
+    el<HTMLInputElement>('manual-path').placeholder = pathPlaceholder(homePath)
     await showOverview()
   } catch (error) {
     showError(`Startup failed: ${String(error)}`)

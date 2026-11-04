@@ -93,13 +93,42 @@ pub(crate) fn lock_scans(
         .map_err(|_| "scan state is poisoned by an earlier panic".to_string())
 }
 
-#[tauri::command]
-pub fn home_dir() -> String {
+/// Resolve the home directory from an environment lookup, without touching the process
+/// environment. Split out from `home_dir` so both platforms are testable on one machine:
+/// the platform is a parameter here, not a compile-time accident.
+fn home_from(lookup: impl Fn(&str) -> Option<String>, is_windows: bool) -> String {
+    // An empty variable is not a path. `HOME=""` is common under cron and some launchers,
+    // and returning it verbatim would point the scan at nothing while looking like a
+    // successful scan of an empty disk.
+    let non_empty = |key: &str| lookup(key).filter(|value| !value.is_empty());
+
     // `DISKGUARDIAN_ROOT` exists so a developer (or a test harness) can point the app at a
     // smaller tree without touching the default behaviour.
-    std::env::var("DISKGUARDIAN_ROOT")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| "/".to_string())
+    if let Some(root) = non_empty("DISKGUARDIAN_ROOT") {
+        return root;
+    }
+
+    if is_windows {
+        // Windows sets `USERPROFILE`. `HOME` is a POSIX variable it does not set, which is
+        // why this used to fall through to `/`. `HOMEDRIVE`+`HOMEPATH` is the older pair,
+        // still present where `USERPROFILE` is redirected (roaming or domain profiles).
+        if let Some(profile) = non_empty("USERPROFILE") {
+            return profile;
+        }
+        if let (Some(drive), Some(path)) = (non_empty("HOMEDRIVE"), non_empty("HOMEPATH")) {
+            return format!("{drive}{path}");
+        }
+        // `/` is a real path on Unix and means nothing on Windows, so a Windows build with
+        // no home variables still names a Windows path.
+        return "C:\\".to_string();
+    }
+
+    non_empty("HOME").unwrap_or_else(|| "/".to_string())
+}
+
+#[tauri::command]
+pub fn home_dir() -> String {
+    home_from(|key| std::env::var(key).ok(), cfg!(windows))
 }
 
 /// Mounted volumes, cross-platform.
@@ -1007,4 +1036,86 @@ pub fn reveal(state: State<'_, AppState>, scan_id: String, node_id: u64) -> Resu
 pub fn quicklook(state: State<'_, AppState>, scan_id: String, node_id: u64) -> Result<(), String> {
     let path = node_path(&state, &scan_id, node_id)?;
     platform::quicklook(&path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::home_from;
+
+    /// A stand-in for the process environment: only the pairs given exist.
+    fn env(pairs: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        let owned = pairs.to_vec();
+        move |key| {
+            owned
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| (*value).to_string())
+        }
+    }
+
+    // The bug this guards: Windows does not set `HOME`, so reading only `HOME` fell
+    // through to `/` and the overview offered the filesystem root instead of the user's
+    // own directory. `USERPROFILE` is the variable Windows actually sets.
+
+    #[test]
+    fn windows_uses_userprofile() {
+        let home = home_from(
+            env(&[("USERPROFILE", "C:\\Users\\seaton"), ("HOME", "")]),
+            true,
+        );
+        assert_eq!(home, "C:\\Users\\seaton");
+    }
+
+    #[test]
+    fn windows_falls_back_to_homedrive_and_homepath() {
+        let home = home_from(
+            env(&[("HOMEDRIVE", "D:"), ("HOMEPATH", "\\Profiles\\seaton")]),
+            true,
+        );
+        assert_eq!(home, "D:\\Profiles\\seaton");
+    }
+
+    #[test]
+    fn windows_never_falls_back_to_the_unix_root() {
+        // `/` is a real path on Unix and means nothing on Windows. A Windows build with
+        // no home variables must still name a Windows path.
+        let home = home_from(env(&[]), true);
+        assert_ne!(home, "/");
+        assert_eq!(home, "C:\\");
+    }
+
+    #[test]
+    fn unix_uses_home() {
+        let home = home_from(env(&[("HOME", "/Users/seaton")]), false);
+        assert_eq!(home, "/Users/seaton");
+    }
+
+    #[test]
+    fn unix_falls_back_to_the_root() {
+        let home = home_from(env(&[]), false);
+        assert_eq!(home, "/");
+    }
+
+    #[test]
+    fn root_override_wins_on_both_platforms() {
+        for is_windows in [true, false] {
+            let home = home_from(
+                env(&[
+                    ("DISKGUARDIAN_ROOT", "/tmp/fixture"),
+                    ("USERPROFILE", "C:\\Users\\seaton"),
+                    ("HOME", "/Users/seaton"),
+                ]),
+                is_windows,
+            );
+            assert_eq!(home, "/tmp/fixture");
+        }
+    }
+
+    #[test]
+    fn empty_variables_are_not_a_home() {
+        // An empty HOME is set often enough (cron, some launchers) that treating it as a
+        // real path would scan nothing and look like an empty disk.
+        let home = home_from(env(&[("HOME", ""), ("USERPROFILE", "")]), false);
+        assert_eq!(home, "/");
+    }
 }
