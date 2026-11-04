@@ -769,6 +769,18 @@ In scope eventually, too dim to state as claims today:
 
 ## Log
 
+- 2026-11-04 — Multi-platform release, Stage C **in flight, not landed**: PR #3 was still a
+  **draft**, which is what the GitHub `BLOCKED` state actually meant, so it was marked ready before
+  any merge attempt. `scripts/merge-verified.sh 3` is now polling the check rollup to terminal state
+  and has **not** merged. The record is being written while it runs rather than after, because the
+  outcome belongs to the tool: the gate prints the complete rollup, refuses on any fail, pending or
+  empty result, merges with a merge commit, and leaves the remote branch in place since remote
+  deletions take the principal's word. Stage B is already complete at `3544a6e` (tag `v0.1.1`, draft
+  release, seven assets, two of them re-hashed on download), so `v0.1.1` becomes an ancestor of
+  `main` only once this merge lands; that ordering is a consequence of the merge, not a claim about
+  it. C30 stays open on its consent arms regardless of the merge, because Stage H still needs a
+  human at a Windows machine.
+
 - 2026-11-04 — Multi-platform release, Stage B: tag `v0.1.1` cut at `3544a6e` — the head that went
   green, not `main`, which PR #3 has not reached, so the tag is not an ancestor of `main` until that
   merge lands. The tag-triggered run (41745364730) went green on all four legs **including Attach to
