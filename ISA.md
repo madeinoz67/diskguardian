@@ -245,7 +245,10 @@ click were already pinned by `src-tauri/tests/ipc.rs`.
 
 ### C19 — The scan target is chosen, not assumed  `[x]`
 The app opens on a "Disks and folders" screen listing every mounted volume with a usage gauge
-and a free-space figure, plus the home folder; each row has a Scan button. A folder can also
+and a free-space figure, plus the home folder and the user-data folders that actually exist
+under it (Downloads, Documents, Desktop, Pictures, Videos on Windows, Movies on macOS, Music),
+so the folders people mean are one click from the overview instead of buried under `AppData`
+or `Library`, which is where the profile's bulk sits. Each row has a Scan button. A folder can also
 be chosen with the system picker, or dropped onto the window. The breadcrumb leads back to
 that screen from any scan.
 **Probe:** `bun test` on `overview.ts` (half-empty is healthy, a quarter is tight, a tenth is
@@ -253,7 +256,9 @@ critical, nonsense numbers clamp instead of drawing off the bar, `basename` hand
 separators); the volume list comes from `sysinfo`, so it is per-platform rather than `df`;
 and `home_dir` resolves each platform's own home (`USERPROFILE`, then `HOMEDRIVE`+`HOMEPATH`
 on Windows; `HOME` elsewhere), covered by `commands::tests` for both platforms and by
-`pathPlaceholder` in `platform.test.ts` for the hand-typed hint.
+`pathPlaceholder` in `platform.test.ts` for the hand-typed hint; and `data_folders` builds the
+conventional sub-folders from a per-platform vocabulary (Windows `Videos`, macOS `Movies`) and
+keeps only those that exist, also covered by `commands::tests`.
 **Falsifier:** an app that can only scan one hard-coded root — including a home row that
 offers the filesystem root because the variable it read does not exist on that platform.
 **Note (2026-11-04, found in the Windows VM while staging Stage H):** the home row rendered
