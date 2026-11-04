@@ -153,12 +153,6 @@ export interface VolumeInfo {
   free_bytes: number
 }
 
-/** A conventional user-data folder under the home directory, if it exists. */
-export interface DataFolder {
-  name: string
-  path: string
-}
-
 export interface DeleteReport {
   freed: number
   removed: number

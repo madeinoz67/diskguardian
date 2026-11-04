@@ -17,7 +17,6 @@ import type {
   CleanupReport,
   EmptyReport,
   HiddenSpaceReport,
-  DataFolder,
   PurgeReport,
   ScanResponse,
   SnapshotReport,
@@ -31,16 +30,6 @@ export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in
 export async function homeDir(): Promise<string> {
   if (!isTauri) return '/Users/you'
   return invoke<string>('home_dir')
-}
-
-export async function dataFolders(): Promise<DataFolder[]> {
-  if (!isTauri) {
-    return [
-      { name: 'Downloads', path: '/Users/you/Downloads' },
-      { name: 'Documents', path: '/Users/you/Documents' },
-    ]
-  }
-  return invoke<DataFolder[]>('data_folders')
 }
 
 export async function volumes(): Promise<VolumeInfo[]> {

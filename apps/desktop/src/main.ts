@@ -1037,27 +1037,6 @@ async function showOverview(): Promise<void> {
     )
   }
 
-  // The home folder is the whole profile, so the bulk of it is AppData on Windows and
-  // Library on macOS and the user's own files sit further down. These rows put the
-  // folders people actually mean one click from the overview. Only the ones that exist
-  // are offered, so a redirected profile simply shows fewer rows rather than wrong ones.
-  try {
-    for (const folder of await bridge.dataFolders()) {
-      volumeList.append(
-        volumeRow({
-          name: folder.name,
-          mount: folder.path,
-          total_bytes: 0,
-          free_bytes: 0,
-          detail: folder.path,
-          gauge: false,
-        }),
-      )
-    }
-  } catch (error) {
-    showError(`Could not list your folders: ${String(error)}`)
-  }
-
   // Anything already in the trash is still occupying the disk, and is the cheapest win on
   // offer. Show the number before offering the button.
   try {
