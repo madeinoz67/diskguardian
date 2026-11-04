@@ -250,8 +250,17 @@ be chosen with the system picker, or dropped onto the window. The breadcrumb lea
 that screen from any scan.
 **Probe:** `bun test` on `overview.ts` (half-empty is healthy, a quarter is tight, a tenth is
 critical, nonsense numbers clamp instead of drawing off the bar, `basename` handles both
-separators); the volume list comes from `sysinfo`, so it is per-platform rather than `df`.
-**Falsifier:** an app that can only scan one hard-coded root.
+separators); the volume list comes from `sysinfo`, so it is per-platform rather than `df`;
+and `home_dir` resolves each platform's own home (`USERPROFILE`, then `HOMEDRIVE`+`HOMEPATH`
+on Windows; `HOME` elsewhere), covered by `commands::tests` for both platforms and by
+`pathPlaceholder` in `platform.test.ts` for the hand-typed hint.
+**Falsifier:** an app that can only scan one hard-coded root — including a home row that
+offers the filesystem root because the variable it read does not exist on that platform.
+**Note (2026-11-04, found in the Windows VM while staging Stage H):** the home row rendered
+`/` on Windows, because `home_dir` read only `HOME`, which Windows does not set. The typed-path
+hint was POSIX-only for the same reason (`/tmp`, `~/Documents`), and Windows does not expand
+`~`. This claim was ticked on a macOS-only run whose probe never covered home resolution
+elsewhere, which is the signature of a platform-gated bug a single-OS gate cannot see.
 
 ### C20 — The view stops claiming things that are gone  `[x]`
 Regaining window focus re-stats the current level and prunes nodes whose paths no longer
