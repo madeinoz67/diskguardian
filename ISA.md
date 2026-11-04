@@ -769,6 +769,16 @@ In scope eventually, too dim to state as claims today:
 
 ## Log
 
+- 2026-11-04 — Multi-platform release, Stage C **landed**: PR #3 merged through
+  `scripts/merge-verified.sh` as merge commit `f892fda`. The gate polled the checks to terminal
+  state, printed the complete rollup — four checks, **0 fail, 0 pending** — and only then merged. The
+  draft flag was the real blocker all along, and it was cleared before the attempt rather than
+  discovered mid-merge. `v0.1.1` is now an ancestor of `main`, so the tag and the code it names are
+  reachable from the default branch, which the earlier record could not yet claim. What remains open
+  is unchanged and deliberate: **C30 stays `[ ]`** because its consent arms need a human at a real
+  Windows machine (Stage H), and the draft release stays unpublished until the principal says
+  otherwise. The increment is landed but not closed.
+
 - 2026-11-04 — Multi-platform release, Stage C **in flight, not landed**: PR #3 was still a
   **draft**, which is what the GitHub `BLOCKED` state actually meant, so it was marked ready before
   any merge attempt. `scripts/merge-verified.sh 3` is now polling the check rollup to terminal state
