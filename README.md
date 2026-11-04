@@ -39,21 +39,46 @@ deletion: you look, you decide, you delete.
 
 ## Install
 
-Builds a macOS app bundle from source:
+Releases carry per-platform artifacts. The single-file downloads are named with their
+full target triples, so a download cannot be mistaken for another architecture's; the
+two macOS dmgs keep the bundler's per-architecture names (`aarch64` / `x64`), which
+cannot collide with any other asset:
+
+| Platform | Artifacts |
+|---|---|
+| macOS (Apple silicon) | `DiskGuardian_0.1.1_aarch64.dmg`, `DiskGuardian-aarch64-apple-darwin.zip` |
+| macOS (Intel) | `DiskGuardian_0.1.1_x64.dmg`, `DiskGuardian-x86_64-apple-darwin.zip` |
+| Windows (x86_64) | `DiskGuardian-x86_64-pc-windows-msvc-setup.exe` (NSIS installer) |
+| Linux (x86_64) | `DiskGuardian-x86_64-unknown-linux-gnu.deb`, `DiskGuardian-x86_64-unknown-linux-gnu.AppImage` |
+
+Nothing is signed (no signing identity yet). macOS quarantines the download —
+right-click the app and choose Open, or run
+`xattr -dr com.apple.quarantine /Applications/DiskGuardian.app`. Windows SmartScreen
+shows "Windows protected your PC"; choose *More info*, then *Run anyway*. The Linux
+`.deb` installs with `sudo apt install ./DiskGuardian-x86_64-unknown-linux-gnu.deb`;
+the AppImage needs FUSE, which some distributions omit —
+`--appimage-extract-and-run` is the no-FUSE route.
+
+Building from source works the same way on every platform — the bundle targets live in
+per-platform Tauri configs, so one command produces the right shape for the host:
 
 ```bash
 bun install --cwd apps/desktop
 bun run --cwd apps/desktop tauri:build
-# → target/release/bundle/macos/DiskGuardian.app  (workspace root target/)
+# macOS   → target/release/bundle/{macos/DiskGuardian.app, dmg/*.dmg}
+# Windows → target/release/bundle/nsis/*-setup.exe
+# Linux   → target/release/bundle/{deb/*.deb, appimage/*.AppImage}
 ```
 
-`tauri:build` first stages the `diskguardian-admin` measurement helper for the
-bundler (Tauri's `externalBin` wants it prebuilt, target-triple-suffixed, under
-`src-tauri/binaries/`). If you only want `cargo build`/`test`/`clippy` on the whole
-workspace, run `bun run --cwd apps/desktop stage:admin` once first: the app crate's
-build script fails until the staged helper exists.
+On macOS and Linux, `tauri:build` first stages the `diskguardian-admin` measurement
+helper for the bundler (Tauri's `externalBin` wants it prebuilt, target-triple-suffixed,
+under `src-tauri/binaries/`); if you only want `cargo build`/`test`/`clippy` on the whole
+workspace, run `bun run --cwd apps/desktop stage:admin` once first, because the app
+crate's build script validates the staged helper. Windows ships no helper, so there is
+nothing to stage there.
 
-Requires Rust (stable), Bun, and the Xcode command line tools.
+Requires Rust (stable) and Bun, plus the Xcode command line tools on macOS and the
+usual webview libraries on Linux.
 
 ## Development
 
@@ -121,6 +146,16 @@ What that pass is, plainly:
   is granted Full Disk Access. Whatever could not be measured is reported with a count,
   never silently dropped.
 
+**On Windows**, the same feature works by self-elevation: measuring restricted areas
+asks Windows for administrator rights — one UAC prompt per app session, raised only
+when you press *Measure restricted areas…*, never at launch. The app re-launches itself
+elevated to measure, and the elevated copy only measures; it never deletes. Decline the
+prompt and everything else works, with those areas shown as restricted. This is new in
+0.1.1.
+
+**On Linux**, restricted-area measurement is not available yet; those areas stay shown
+as restricted.
+
 ## Hidden space
 
 A scan of a **volume** (its root is a mount point — the startup disk, an external disk)
@@ -184,7 +219,7 @@ Early. The core loop works end to end on macOS: scan, draw, drill, collect, dele
 administrator measurement of restricted areas.
 
 Not yet: cloud accounts (Dropbox, Drive, OneDrive, Box), APFS local
-snapshots, disk images, network volumes, and Windows/Linux builds.
+snapshots, disk images, network volumes, and restricted-area measurement on Linux.
 
 ## Licence
 

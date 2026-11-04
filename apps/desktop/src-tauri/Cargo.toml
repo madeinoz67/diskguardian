@@ -37,6 +37,15 @@ libc = "0.2"
 # `NSNumber`) is in the default feature set.
 objc2-foundation = { version = "0.3" }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows ships no sidecar (maintainer ruling, 2026-11-03): the app re-execs itself
+# elevated and the pre-Tauri argv branch in main serves the admin protocol, so the app
+# links the serve loop (design §3.7.1) and the one-call elevation cage (§3.7.2).
+# Windows-only on purpose: macOS and Linux app binaries do not even link a serve path,
+# and this crate gains no `unsafe` of its own.
+diskguardian-admin = { path = "../../../crates/admin" }
+diskguardian-win-elevate = { path = "../../../crates/win-elevate" }
+
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"

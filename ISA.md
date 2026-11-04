@@ -2,7 +2,7 @@
 title: diskguardian
 principal_stated_goal: "I want to setup a rust project called diskguardian, will be an open source disk space visualizer and free up space, cross platform. ... will be a graphical ui, primary for macos. ... research disk daisy, I want it to be identical"
 phase: climbing
-progress: 24/29
+progress: 27/30
 iteration: 1
 created: 2026-10-30
 ---
@@ -25,7 +25,6 @@ Open it and the disk draws itself as a flower: every folder a coloured petal, ev
 - APFS local snapshot discovery and purge.
 - Disk image (.dmg) mounting and scanning.
 - Network volumes.
-- Windows and Linux builds. The code is written portable and cross-platform, but only macOS is tested and shipped at v0.1.
 - APFS clone detection (`ATTR_CMNEXT_CLONEPARENT`). Hard links are deduplicated; clones are not, yet.
 
 ## Anti-claims (what must NOT be true)
@@ -192,15 +191,23 @@ root concurrently; the honest behaviour is "open on arrival", with no second wal
 > and `guard` canonicalises paths (`/var/...` becomes `/private/var/...` on macOS), so the
 > lookup missed, nothing was pruned, and "freed" reported a directory's metadata size. The
 > principal saw it as "delete does nothing". Now aligned by position, and pinned by
-> `delete_removes_the_node_and_returns_a_smaller_view` in `src-tauri/tests/ipc.rs`, which
-> drives the real command on a mock runtime.
+> `delete_strikes_the_node_through_and_shrinks_the_totals` in
+> `apps/desktop/src-tauri/tests/ipc.rs`, which drives the real command on a mock runtime.
+> *(Corrected 2026-11-03: this note named `delete_removes_the_node_and_returns_a_smaller_view`,
+> a test that has never existed in the file. The evidence line pointed at nothing, which is the
+> class of defect the claim checker cannot catch — it verifies that evidence is named, never that
+> the name resolves.)*
 After a delete the backend prunes the deleted nodes from the tree, recomputes every
 ancestor's totals and returns a fresh view, so the petal disappears and the totals shrink
 immediately. The default action moves items to the macOS Trash; holding Option on the Delete
 button removes them permanently, which always asks first.
-**Probe:** `cargo test` on `Tree::forget` (deleted node leaves its parent, every ancestor
+**Probe:** `cargo test` — `Tree::forget` (deleted node leaves its parent, every ancestor
 loses exactly the deleted bytes, tree arithmetic still holds, the scan root cannot be
-forgotten) plus the existing Trash-recovery test.
+forgotten), the Trash-recovery test, and the end-to-end
+`delete_strikes_the_node_through_and_shrinks_the_totals` in
+`apps/desktop/src-tauri/tests/ipc.rs`. That last one takes its expected drop from the
+pre-delete scan rather than a hardcoded figure, so it holds on any filesystem — the first
+two alone are exactly what closed this claim wrongly before the 2026-11-02 correction.
 **Falsifier:** a delete that triggers a full rescan, or a parent whose total does not shrink.
 
 ### C18 — Collecting from the list actually works  `[x]`
@@ -275,9 +282,11 @@ across the petal and a struck-through name in the list, worth zero bytes and exc
 every ancestor's total. A rescan clears the ghosts.
 **Probe:** `cargo test` — `marking_a_node_missing_zeroes_it_and_updates_every_ancestor`
 (the node stays listed, is flagged, totals drop by exactly its subtree) and the IPC test
-`delete_strikes_the_node_through_and_shrinks_the_totals` (65536 bytes removed, not a
-directory's metadata size). The view gives a missing node a floor width of parent/200 so it
-stays visible while counting as zero.
+`delete_strikes_the_node_through_and_shrinks_the_totals` (the drop equals the subtree total
+the pre-delete scan measured — 65536 on APFS, 69632 on ext4, where the directory inode
+occupies a 4096 block — not a hardcoded constant, and not the directory's metadata size;
+the ext4 leg of this probe is CI's to run). The view gives a missing node a floor width of
+parent/200 so it stays visible while counting as zero.
 **Falsifier:** a deletion the user cannot see in the flower, or one that leaves the totals
 unchanged.
 
@@ -345,6 +354,12 @@ and gone by +8 s, so the heartbeat mechanism does its job without a test harness
 directory survived the SIGTERM (a `TempDir` drop does not run on an abrupt kill), so on this path
 the heartbeat is the mechanism that actually ends the session — worth knowing, because the design
 lists three and only one of them fired.
+**Platform note (2026-11-03):** the helper and its protocol ship unchanged in the macOS
+and Linux artifacts. Windows ships no helper: the app re-execs itself elevated (UAC)
+and the elevated instance serves the same protocol from the same code (`crates/admin`
+lib). On Linux the Measure button reports "not available on Linux yet" and restricted
+petals stay restricted (A3, A5 hold). Per-platform launchers for Linux are deferred
+with reopen triggers in the multi-platform release design.
 
 ### C24 — Duplicate groups are content-identical, never a space promise  `[x]`
 A duplicate pass over a finished scan (never during one) groups only files whose whole-file
@@ -519,6 +534,66 @@ figure — much of it is space the scan already counts", and the nine excluded m
 Evidence: `docs/screenshot.png` (committed, and now the README's front-page image),
 `/tmp/dg-shot-panel.png` for the panel.
 
+### C30 — Every supported platform ships an installable, structurally verified artifact; Windows measures restricted space by self-elevation  `[ ]`
+A tagged release attaches installable artifacts for macOS arm64 + x86_64 (`.dmg` + `.app`
+`.zip`), Windows x86_64 (NSIS `.exe`), and Linux x86_64 (`.deb` + `.AppImage`) — the
+single-file artifacts named with their full target triples (the `.app` zips, the
+Windows setup, the Linux deb and AppImage), while the two macOS dmgs keep the bundler's
+per-architecture names (`aarch64` / `x64`), which cannot collide with any other asset;
+each verified before upload to contain exactly the binaries that platform ships
+(macOS/Linux: app + helper; Windows: app only, with no `diskguardian-admin*` file
+anywhere in the payload) — byte-identical by SHA-256 on macOS, Windows and the Linux
+`.deb` (the build passes `--no-binary-patching`, so the bundler's in-place bundle-type
+rewrite never runs; macOS needs no flag, the bundler already skips macOS-native
+bundles) and, on the Linux `.AppImage` only, equal at ELF-content level: same machine,
+GNU build-id, interpreter and `DT_NEEDED` list, RUNPATH exactly `$ORIGIN/../lib`, and
+every section's content hash equal to the cargo build product except the
+bundler-owned `.dynstr`, `.dynamic` and `.shstrtab` (linuxdeploy's RUNPATH
+injection, its library deployment and its rewrite of the section-name table are
+intrinsic to the format — a build-id survives all post-link mutation, so no
+single-file hash there would carry meaning; the section-NAME set is still
+asserted equal and that is what carries the semantics, since a renamed, added or
+dropped section always fails it); and the release body
+naming what each platform's OS will warn about (Gatekeeper, SmartScreen, unsigned deb /
+AppImage FUSE).
+
+On Windows, measuring restricted areas re-executes the app elevated (UAC `runas`), the
+elevated instance serves the unchanged job/results protocol and exits with the session,
+and — unlike macOS, whose privileged process is a measurement-only helper — the
+privileged process is the app binary itself, gated by a pre-Tauri argv branch that
+initialises no window, webview or command surface. That difference is stated, not
+hidden. A UAC prompt cannot be dismissed programmatically; an abandoned prompt parks
+that one pass until answered or the app exits, and no second prompt can stack.
+
+**Probe:** (CI arms, close on workflow evidence) the release workflow's per-leg Verify
+steps — expected-set hash equality plus the Windows negative assertion, hashes printed
+in the job log; on Linux the AppImage arm's per-section sha256 manifest, build-id pair,
+RUNPATH and `NEEDED` comparison — the release lane's exact-count and duplicate-name
+assertions, and the
+post-tag download re-hash; the injected-launch IPC tests (decline maps to the exact
+refusal sentence with the tree untouched; one launch per app session; the classifier),
+run headless in CI.
+**Probe:** (consent arms, open until the Stage H record lands) one real UAC prompt per
+app session — not one per scan — seen and photographed by a human on real Windows;
+decline shows the refusal banner and changes nothing; the elevated instance grafts
+measured petals; it is gone within its 30-second heartbeat budget after the parent is
+force-killed. GitHub's Windows runners are already elevated, so the consent prompt
+never fires there; these arms cannot close on CI evidence and do not pretend to.
+**Falsifier:** any shipped platform artifact whose payload lacks a binary in its
+expected set (or, on Windows, contains one outside it) by hash; any single-file asset
+named without its full triple, or a dmg name colliding with another asset; a tag whose
+draft release carries fewer assets than the matrix produces; a release body omitting a
+platform's warning; an AppImage payload whose build-id, interpreter, `DT_NEEDED` list or
+any non-exempt section hash differs from the cargo build product, or whose RUNPATH is
+anything but exactly `$ORIGIN/../lib`; a `.deb` or NSIS payload that is not
+byte-identical (patching is off, so any difference names an unknown mutator and stops
+the release); a second UAC prompt for a second pass in one app session; an
+elevated instance still alive past its budgets after the parent dies.
+
+**Status:** opens `[ ]`. The CI arms close when the 0.1.1 tag is audited; the consent
+arms stay open until the Stage H hand-test record exists, even if the artifact has
+shipped in the meantime.
+
 ## Test Strategy
 
 | Layer | Probe |
@@ -594,6 +669,35 @@ Evidence: `docs/screenshot.png` (committed, and now the README's front-page imag
   template whose only interpolations are two app-generated, charset-asserted paths, so a
   folder named to look like shell syntax is inert.
 - **Narrow deletion guard** (2026-10-30, from a failing test that was right). Protecting `/private` and `/usr` wholesale refused the user's own temp directory (through the `/tmp` symlink) and every Homebrew cache. The guard now names the system's own trees, and a second test pins the narrow behaviour so a future "fix" cannot re-widen it.
+- **Windows elevation is self-elevation through the existing launcher seam** (2026-11-03,
+  maintainer ruling). The app re-execs itself with `runas`; the elevated instance takes a
+  pre-Tauri argv branch and serves the unchanged job/results protocol. Accepted trade,
+  stated in C30: the Windows privileged image is the whole app binary, not a
+  measurement-only helper; the argv branch that selects serving constructs no window,
+  webview or command surface, so no deletion code path is reachable elevated. The single
+  `ShellExecuteW` lives in a ~60-line windows-gated crate (`crates/win-elevate`) so
+  `crates/admin` keeps `unsafe_code = "forbid"` and the app crate gains no `unsafe`.
+- **Release artifacts are hash-verified against the binaries cargo built for the
+  triple, against per-platform expected sets** (2026-11-03). Presence-by-name is what a
+  bundler promises; content-identity is what a user installs. The hash check also
+  proves architecture for free and survives bundler renaming; the per-platform set plus
+  the Windows negative assertion make "what ships" a decision the config makes and the
+  pipeline enforces.
+- **Non-macOS payloads were never byte-identical; the fix removes the rewrite rather than
+  loosening the check** (2026-11-03, after run 41635246338). Tauri's bundler overwrites a
+  27-byte link-time placeholder (`__TAURI_BUNDLE_TYPE_VAR_UNK` → `_DEB`/`_APP`/`_NSS`) in
+  place at the cargo output path before each non-macOS bundle and restores it afterwards, so
+  the packaged main binary differed from the reference by exactly three bytes (measured:
+  offsets 733413–733415, `UNK`→`DEB`, no rpath entry either side). macOS passed only because
+  the bundler skips macOS-native bundles, and the sidecar matched everywhere because sidecars
+  are copied, never patched. linuxdeploy separately rewrites **both** AppImage binaries with
+  `RUNPATH $ORIGIN/../lib`, growing them. The rejected alternative was a bounded carve-out
+  permitting the three-byte slot; a permitted deviation is a claim that has to be explained at
+  every review. The accepted fix is `--no-binary-patching`, which makes the `.deb` and NSIS
+  genuinely byte-identical and costs only per-bundle-type updater support — a feature this
+  project does not ship, reopen if an updater is ever adopted. The AppImage keeps an
+  ELF-content check because its rewrite is intrinsic to the format. A GNU build-id survives all
+  post-link mutation, so it is a necessary condition and never an integrity check.
 
 ## Roadmap — DaisyDisk parity (opened 2026-11-02)
 
@@ -664,6 +768,156 @@ In scope eventually, too dim to state as claims today:
 - Animation on drill-down, which DaisyDisk has and v0.1 does not.
 
 ## Log
+
+- 2026-11-04 — Multi-platform release, Stage C **in flight, not landed**: PR #3 was still a
+  **draft**, which is what the GitHub `BLOCKED` state actually meant, so it was marked ready before
+  any merge attempt. `scripts/merge-verified.sh 3` is now polling the check rollup to terminal state
+  and has **not** merged. The record is being written while it runs rather than after, because the
+  outcome belongs to the tool: the gate prints the complete rollup, refuses on any fail, pending or
+  empty result, merges with a merge commit, and leaves the remote branch in place since remote
+  deletions take the principal's word. Stage B is already complete at `3544a6e` (tag `v0.1.1`, draft
+  release, seven assets, two of them re-hashed on download), so `v0.1.1` becomes an ancestor of
+  `main` only once this merge lands; that ordering is a consequence of the merge, not a claim about
+  it. C30 stays open on its consent arms regardless of the merge, because Stage H still needs a
+  human at a Windows machine.
+
+- 2026-11-04 — Multi-platform release, Stage B: tag `v0.1.1` cut at `3544a6e` — the head that went
+  green, not `main`, which PR #3 has not reached, so the tag is not an ancestor of `main` until that
+  merge lands. The tag-triggered run (41745364730) went green on all four legs **including Attach to
+  the draft release**, and the draft "DiskGuardian v0.1.1" carries exactly the seven expected assets,
+  every one non-zero: two `.zip`, two `.dmg`, the Windows `-setup.exe`, the `.deb` and the
+  `.AppImage`. The single-file artifacts are triple-named and the two dmgs keep the bundler's
+  architecture names, which is what C30 now says. **Post-tag download re-hash:** the `.deb`
+  (`4bc1fc4e…`) and the `.AppImage` (`15223b1b…`) came back byte-identical to the digests the verify
+  step printed, so the attach step did not alter them. The other five carry no printed digest to
+  compare against, and that limit is stated rather than glossed. **C30 stays open:** this closes its
+  CI arms, but the consent arms wait on Stage H and no human has yet seen a UAC prompt from this
+  build. The draft is deliberately left unpublished.
+
+- 2026-11-04 — Multi-platform release, Stage A green and the RED controls run: **five of five pass
+  as designed, after one partial found a defect in our own instrumentation rather than in the
+  artifacts.**
+  Stage A's honest green is iteration 7 (run 41736259266, all four legs, **zero MISS lines**, the
+  only skips being the three named exemptions `.dynstr`, `.dynamic`, `.shstrtab`), with `.text`
+  matching genuinely on both binaries and the deb byte-identical. PR #3's four CI lanes are green
+  alongside it. Each control ran on its own scratch branch off `8af7d19`, one sabotage each —
+  stacking was rejected up front because R-neg's assertion sits after the phantom check and a
+  stacked run would have failed for the wrong reason. Four failed as designed: **R-phantom**
+  (41740327048) through the payload lookup, with the macOS leg honestly noted as failing earlier,
+  at the payload hash, because the phantom's payload path is absent from the bundle; **R-strip**
+  (41741129856) at the presence check; **R-neg** (41741242464), where a planted mixed-case
+  `DiskGuardian-Admin.exe` was enumerated, counted at 1, named, and refused — the control that
+  pins the app-only ruling; **R-mutate m2** (41741474090) on **both** arms, with the deb diagnostic
+  reporting "total differing bytes vs reference: 1" against the correctly chosen candidate and the
+  AppImage arm reporting `.rodata` differs. **R-mutate m1** (41741360938) is a **partial**: the deb
+  arm fired correctly, then the step died in the iteration-2 diagnostic block before the AppImage
+  arm ran, for two reasons of different size — the candidate find used `-name "$bin*"` and
+  nominated `diskguardian-app.png` from the deb's icon tree, dumping 21,603 lines of cmp noise, and
+  `printf '%s\n' "$DIFFS" | head -1` took SIGPIPE when head closed, which `pipefail` turned into
+  exit 141 and `set -e` turned into a dead step. Measured locally: the pipe form returns 141, the
+  herestring form returns 0. Both are fixed in `bbd9e94`, and **m1 then re-ran and passed on both
+  arms** (run 41743288948, branch `red-mutate-text` at `91b422f`, one sabotage commit on
+  `cfe3ac9`): the diagnostic named the right candidate, `debx/usr/bin/diskguardian-app`, reported
+  "total differing bytes vs reference: 1", printed both 128-byte context dumps from offset
+  1577417, and the step **survived its own miss path** to reach the AppImage arm, which reported
+  `.text` reference `04a70e15…` against payload `5697f08f…`. That payload value is precisely what
+  the green runs print for the genuine `.text`, so the reference sits exactly one byte away from
+  what shipped — the control's whole claim, corroborated by the numbers rather than asserted. The
+  admin sidecar's sections then compared clean on the same run, so the step completed a full pass
+  with only its two designed failures. **The controls are five of five**: phantom (all four legs),
+  strip, neg, m1 and m2; the acceptance rule's RED precondition is satisfied on evidence.
+
+- 2026-11-03 — Multi-platform release, amendment 2, consuming no Stage A iteration: the Linux
+  verification failure is root-caused and the premise corrected instead of weakened. The mutator
+  is Tauri's bundler itself — `patch_binary` in `crates/tauri-bundler/src/bundle.rs` at
+  `tauri-cli-v2.12.4` rewrites the 27-byte `__TAURI_BUNDLE_TYPE_VAR_UNK` placeholder in place at
+  the cargo output path before each non-macOS bundle and restores the original afterwards. The
+  run's own `cmp -l` was complete and is the whole proof: exactly three bytes, 733413–733415,
+  `125 116 113` → `104 105 102`, `UNK`→`DEB`, with the sidecar matching by hash on the very next
+  line because sidecars are copied rather than patched. linuxdeploy then rewrites both AppImage
+  binaries with `RUNPATH $ORIGIN/../lib`, growing the app by 33,825 B and the sidecar by 6,169 B.
+  **A GNU build-id survives all post-link mutation** — the deb and AppImage copies share
+  `06c35623…` while both differ from the reference and from each other — so it can never be an
+  integrity check, only a necessary condition. Correction: `--no-binary-patching` (its only cost
+  is per-bundle-type updater support, and this project ships no updater), which makes the `.deb`
+  and NSIS byte-identical exactly as C30 originally said, leaving the AppImage on an ELF-content
+  check — machine, build-id, interpreter, `DT_NEEDED`, RUNPATH asserted exactly
+  `$ORIGIN/../lib`, section-name set, and every section hash equal except the bundler-owned
+  `.dynstr`/`.dynamic`. `R-mutate` tightens to two named mutations, one byte inside `.text` and
+  one inside `.rodata`; the residual blind spot, bytes outside every section, is stated rather
+  than hidden. Iteration cap: 2 spent, the amendment spends none.
+
+- 2026-11-03 — Multi-platform release, Stage A attempt 2 of a pre-committed 5: **the same two
+  legs failed, for two new reasons**, and the adversary lane returned a HIGH that outranks both.
+  Windows: `E0308` twice at `admin.rs:637` and `:650` — the launcher returned `ElevateOutcome`
+  where the seam wants `LaunchOutcome`, two distinct structs with identical fields, so the mapping
+  the crate's own doc comment promised had never been written. Fixed by mapping once at the seam.
+  It cannot be proven on this machine (it is `cfg(windows)` code) and is not claimed to be; the
+  Windows CI leg is the proof, which is the same standing this increment already gave the Windows
+  compile. **Linux: the hypothesis from attempt 1 is confirmed.** The instrumentation printed the
+  reference `diskguardian-app` with no RUNPATH, the AppImage payload carrying
+  `RUNPATH: [$ORIGIN/../lib]`, and `diskguardian-admin` matching its reference **byte-for-byte** in
+  the deb. Byte-identity is therefore unachievable for the app binary on Linux, so per the
+  pre-committed rule the correction goes to the design and C30 rather than to a looser check.
+  One thing is *not* explained and is recorded as unknown rather than smoothed over: the **deb**
+  payload differs at an identical size (7292936) with no RUNPATH either, so the rpath story covers
+  the AppImage and does not yet cover the deb. Designer lane opened for that; C30's Linux clause
+  still says "byte-identical by SHA-256" and is known false until it lands.
+  **Adversary REFUTE (537b01e..2178102): the A1 privileged-image claim survives**, after 23
+  classifier shapes executed against a vendored copy, an executed empty-argv `execve`, and the
+  elevation cage read against the windows-sys source. One HIGH and three LOWs came back.
+  **F1 HIGH, folded.** The Windows elevation path was **unreachable from the shipped UI**:
+  `main.ts:363` gated the affordance on `isMacPlatform(navigator.userAgent)` — `/Mac/i`, written in
+  the macOS-only era — and this branch added the Windows runner in Rust while touching **zero**
+  frontend files. On the 0.1.1 Windows artifact a partial scan never rendered Measure, so
+  `scan_restricted` was never invoked, no UAC prompt could fire, and the classifier, the pre-Tauri
+  branch, the win-elevate cage and the NSIS negative assertion were all dead code in the product,
+  while the README and C30 described that behaviour as shipping. No CI arm could see it: the ipc
+  tests drive the Rust command directly and no Windows UI test exists. Fixed by replacing the
+  OS-name question with the runner question, `hasAdminRunner` (macOS or Windows; Linux still has no
+  runner and must not offer the button). RED, quoted: `SyntaxError: Export named 'hasAdminRunner'
+  not found in module .../src/admin.ts` (0 pass, 1 fail). GREEN: 65 pass, 0 fail, tsc exit 0.
+  **F2 LOW, folded.** `tests/serve_order.rs` located the dispatch with
+  `source.find("admin_serve_mode")` — first occurrence, comments included — so a comment above
+  `run()` that merely named the function satisfied the ordering assertion while the dispatch sat
+  below the launch, and an elevated copy would have opened the full Tauri app with the guard green.
+  The lookup is now comment-blind and requires a call; a second test pins the doctored shape and
+  asserts the naive search *is* fooled, so the fix is proven to discriminate rather than asserted
+  to. GREEN: 26 lib, 47 ipc, 2 serve_order, 1 crate_names, clippy clean.
+  **Row-call, not folded:** F3 the admin audit log hardcodes `$HOME/Library/Logs/DiskGuardian` on
+  every platform (on Windows `HOME` is usually unset, so that record silently does not exist);
+  F4 `ShellExecuteW` returns after consent, so a child that dies before readiness makes a user who
+  just approved UAC wait the full 1020 s bound, and the staging path is quoted rather than escaped;
+  F5 C30's liveness wording says "0700 staging directory", which is the macOS mechanism, while
+  Windows exclusivity is `%TEMP%`'s inherited profile ACLs.
+  Worth keeping: this PR is the **first Windows gate this branch ever had** — pushes without a PR
+  trigger no workflow — and the lane that would have caught F1's compile class is the PR CI lane.
+
+- 2026-11-03 — Multi-platform release, Stage A attempt 1 of a pre-committed 5: **two of four legs
+  failed**. macOS arm64 and x86_64 passed, including the new hash verification. Windows failed to
+  build — `E0433: cannot find module or crate win_elevate` at `admin.rs:633`, because the package is
+  named `diskguardian-win-elevate` and exposes `diskguardian_win_elevate`; the call sits behind
+  `#[cfg(target_os = "windows")]`, so every macOS gate is genuinely green and blind to it. Linux
+  built its deb, extracted it, and then matched no payload file to the reference hash; the cause is
+  **not yet known** and the leading hypothesis (the bundler's `patchelf` pass rewriting the ELF) would
+  make the design's byte-identity premise wrong for Linux rather than the workflow wrong. Instrumented
+  before the rule is touched, per the pre-committed rule.
+  Two findings that outlive this attempt. **`ci.yml` triggers on `push` to `main` and on
+  `pull_request` only**, so a branch push with no PR runs no gate at all — that is how a Windows
+  compile break reached the release lane unseen, and an early draft PR is now part of the loop.
+  **The Gortex daemon served the primary checkout's bytes for this worktree** (it returned an `ISA.md`
+  at `progress: 24/29` with no C30 while this file says 27/30), so any read through Gortex on a
+  non-primary worktree is `main`'s content; use `git` and native reads there. *(The counter was
+  separately repaired from a stale 24/29 to 27/30 with no claim ticked in that range: the base was
+  already three ahead of its stated count, which is why the stale read was plausible rather than
+  obviously wrong.)*
+  Review lanes on the built branch: governance returned FIX FIRST — C30's evidence lines begin
+  `**Probe (…):**` and `check-isa-claims.ts` accepts only `**Probe:**`, so ticking C30 at the 0.1.1
+  audit would fail the gate deterministically; and "every artifact named with its target triple" is
+  false of the two dmgs, which keep the bundler's architecture names, so C30's own falsifier catches
+  its own release. Code review found one blocking defect (the same Windows break) and re-proved the
+  macOS hash check byte-identical against a real bundle locally. Adversary still out. C30 stays open,
+  progress unchanged at 27/30.
 
 - 2026-11-02 — Favourite folders shipped (C28), and the first increment run end to end under the
   new `increment` skill. What landed: a Rust-owned JSON store in the app data directory, star from a

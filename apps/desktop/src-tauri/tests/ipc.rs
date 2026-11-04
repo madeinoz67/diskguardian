@@ -79,6 +79,24 @@ fn child_named(
         .expect("node id")
 }
 
+/// A node's subtree total from its row in a **pre-delete** view: the scan's own
+/// physical measurement (`total = own + Σ children`), which is what deleting that
+/// node must remove. A directory's own allocation is part of that figure — a fresh
+/// directory is 0 blocks on APFS and one 4096-block inode on ext4 — so for the
+/// standard `sub` fixture this returns 65536 (child.bin's 128 blocks) on APFS and
+/// 69632 on ext4. Asserting against it holds on any filesystem, where hardcoding
+/// either number pins the test to one. Post-delete views must not use this: a
+/// missing node's row carries the visibility sliver, not its total.
+fn subtree_total_in(view: &serde_json::Value, name: &str) -> u64 {
+    view.as_array()
+        .expect("view array")
+        .iter()
+        .find(|node| node["name"] == name)
+        .unwrap_or_else(|| panic!("{name} is listed in the view"))["bytes"]
+        .as_u64()
+        .expect("bytes")
+}
+
 #[test]
 fn collect_adds_a_node_and_reports_the_total() {
     let app = build();
@@ -212,6 +230,9 @@ fn delete_strikes_the_node_through_and_shrinks_the_totals() {
     )
     .expect("view");
     let before_bytes = before[0]["bytes"].as_u64().unwrap_or(0);
+    // The pre-delete scan is the measurement the drop is judged against, taken
+    // before the delete exists to agree with itself.
+    let sub_total = subtree_total_in(&before, "sub");
 
     call(
         &webview,
@@ -240,21 +261,36 @@ fn delete_strikes_the_node_through_and_shrinks_the_totals() {
         struck["missing"], true,
         "and it is struck through: {report}"
     );
-    // C22: worth nothing in the totals (the exact 65536 drop is asserted below) but
-    // still drawn — the view gives a missing node a floor sliver so the strike-through
-    // has something to draw on. This assertion was originally `== 0`, which the
-    // landed floor (parent/200, minimum 1) makes unsatisfiable; it failed on main's
-    // own commit before this branch touched anything, so it is pinned here as the
-    // behaviour the ISA actually describes.
+    // C22: worth nothing in the totals (the drop is exactly `sub_total`, asserted
+    // below) but still drawn — the view gives a missing node a floor sliver so the
+    // strike-through has something to draw on. This assertion was originally `== 0`,
+    // which the landed floor (parent/200, minimum 1) makes unsatisfiable; it failed
+    // on main's own commit before this branch touched anything, so it is pinned here
+    // as the behaviour the ISA actually describes.
     let sliver = struck["bytes"].as_u64().expect("sliver bytes");
     assert!(sliver > 0, "the struck node stays visible: {report}");
     assert!(sliver < 4096, "a sliver, not a size: {sliver}");
 
+    // `freed` must be the scanned subtree total, not the delete outcome's own
+    // figure for the directory (its metadata size — the C17 regression).
+    assert_eq!(
+        report["freed"].as_u64(),
+        Some(sub_total),
+        "freed reports the scanned subtree: {report}"
+    );
+
     let after_bytes = report["bytes"].as_u64().unwrap_or(0);
     assert!(after_bytes < before_bytes, "the total must shrink");
+    // `sub_total` comes from the pre-delete scan, so this is two independent
+    // reads of the same bytes — the scan's measurement and the delete pipeline's
+    // arithmetic — and it fails if either drops, adds or miscounts the subtree.
+    // It is 65536 on APFS and 69632 on ext4, because the directory's own
+    // allocation is part of the subtree and the two filesystems disagree about
+    // it; the derived figure is right on both where the old constant was right
+    // on one.
     assert_eq!(
         before_bytes - after_bytes,
-        65536,
+        sub_total,
         "exactly the deleted subtree, not the directory's metadata size"
     );
 }
@@ -593,6 +629,73 @@ fn a_declined_dialog_is_a_typed_refusal_not_a_crash() {
     assert!(
         message.contains("unmeasured"),
         "and it must say the tree is untouched: {message}"
+    );
+}
+
+/// The Windows decline (multi-platform release design §3.7.2): a runas refusal
+/// surfaces as "the user cancelled the elevation prompt", and the refusal mapping —
+/// deliberately unchanged by the design — must word it as the exact sentence the
+/// macOS decline produces. Also pins what the decline costs: no authorisation spent
+/// (`admin_authorised` still false, so a retry may ask again) and the tree untouched.
+#[test]
+fn a_windows_shaped_decline_is_the_same_refusal_and_spends_no_session() {
+    let app = build();
+    let webview = webview(&app);
+    let (scan_id, root, _locked, _path) = seed_scan_with_locked(&app, "locked");
+    let before = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": &scan_id, "nodeId": root }),
+    )
+    .expect("view before");
+    let before_bytes = before[0]["bytes"].as_u64().expect("bytes");
+    inject_launcher(
+        &app,
+        Arc::new(|_dir: &Path| {
+            Ok(admin::LaunchOutcome {
+                success: false,
+                stderr: "the user cancelled the elevation prompt".to_string(),
+            })
+        }),
+    );
+
+    let result = call(
+        &webview,
+        "scan_restricted",
+        serde_json::json!({ "scanId": scan_id }),
+    );
+    assert!(result.is_err(), "a declined UAC prompt must be an error");
+    assert_eq!(
+        result.unwrap_err().as_str().unwrap_or_default(),
+        "Administrator access was declined — restricted areas stay unmeasured",
+        "byte-for-byte the macOS refusal sentence: one mapping, two platforms"
+    );
+
+    let authorised =
+        call(&webview, "admin_authorised", serde_json::json!({})).expect("admin_authorised");
+    assert_eq!(
+        authorised, false,
+        "a decline must not spend the session's one prompt"
+    );
+
+    let after = call(
+        &webview,
+        "view",
+        serde_json::json!({ "scanId": &scan_id, "nodeId": root }),
+    )
+    .expect("view after");
+    assert_eq!(
+        after[0]["bytes"].as_u64().expect("bytes"),
+        before_bytes,
+        "a declined pass changes nothing"
+    );
+    assert!(
+        after
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|n| n["name"] == "locked" && n["kind"] == "restricted"),
+        "the locked area is still drawn restricted, never zero"
     );
 }
 
@@ -2398,6 +2501,10 @@ fn deleting_grows_the_hidden_petal_by_exactly_the_freed_bytes() {
         .expect("the petal exists before the delete")["bytes"]
         .as_u64()
         .expect("bytes");
+    // What the delete must move: the scanned subtree total, measured before the
+    // delete exists (65536 on APFS, 69632 on ext4 — the directory's own
+    // allocation is part of the subtree and differs between the two).
+    let sub_total = subtree_total_in(&before, "sub");
 
     let child = child_named(&webview, &scan_id, root, "sub");
     call(
@@ -2414,8 +2521,8 @@ fn deleting_grows_the_hidden_petal_by_exactly_the_freed_bytes() {
     )
     .expect("delete");
 
-    // The existing C17 test pins the tree arithmetic (exactly 65536); this pins the
-    // residual side of the same response.
+    // The C22 test pins the tree arithmetic against the same derived `sub_total`;
+    // this pins the residual side of the same response.
     let summary = &report["volume"];
     assert_eq!(
         summary["used_bytes"].as_u64(),
@@ -2424,7 +2531,7 @@ fn deleting_grows_the_hidden_petal_by_exactly_the_freed_bytes() {
     );
     assert_eq!(
         summary["hidden_bytes"].as_i64(),
-        Some((used as i64) - (tree_total as i64) + 65_536),
+        Some((used as i64) - (tree_total as i64) + (sub_total as i64)),
         "the residual grew by exactly the freed bytes: {report}"
     );
     let hidden_after = report["view"]
@@ -2437,7 +2544,7 @@ fn deleting_grows_the_hidden_petal_by_exactly_the_freed_bytes() {
         .expect("bytes");
     assert_eq!(
         hidden_after - hidden_before,
-        65_536,
+        sub_total,
         "the petal grew by exactly the freed bytes, in the same response"
     );
 

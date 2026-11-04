@@ -61,6 +61,11 @@ jobs:
           bun run build
 
       - name: Stage the measurement helper for this host
+        # Windows ships no sidecar (maintainer ruling, 2026-11-03): its bundle config
+        # has no externalBin, so there is nothing to stage and nothing to validate —
+        # and the app's Windows compile must not depend on a staged binary it must not
+        # ship.
+        if: runner.os != 'Windows'
         working-directory: apps/desktop
         run: bun run stage:admin
 
@@ -71,6 +76,21 @@ jobs:
         env:
           RUSTFLAGS: -D warnings
         run: cargo check -p diskguardian-app
+
+      # The app crate's own tests (design §3.7.5(3)): the mock runtime makes the IPC
+      # suite headless, and this is where the classifier, injected-launch and
+      # source-order guard tests run in CI — ubuntu because the webview deps and the
+      # staging are already present on that leg. Nothing here needs elevation.
+      - name: Run the application crate's tests (headless, mock runtime)
+        if: runner.os == 'Linux'
+        run: cargo test -p diskguardian-app --tests
+
+      # The harness-less re-exec smoke (design §3.7.5, optional arm): the only CI
+      # exercise of the real ShellExecuteW wrapper. It skips with a message anywhere
+      # UAC could actually fire; GitHub's Windows runners are already elevated.
+      - name: Run the win-elevate tests (the re-exec smoke)
+        if: runner.os == 'Windows'
+        run: cargo test -p diskguardian-win-elevate
 
   frontend:
     name: Sunburst (TypeScript)

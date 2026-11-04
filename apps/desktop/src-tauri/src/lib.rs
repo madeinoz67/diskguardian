@@ -2,9 +2,12 @@ pub mod admin;
 mod commands;
 pub mod favourites;
 mod platform;
+pub mod serve_mode;
 pub mod snapshots;
 pub mod state;
 pub mod volume;
+
+pub use serve_mode::{admin_serve_mode, ServeMode};
 
 use state::AppState;
 

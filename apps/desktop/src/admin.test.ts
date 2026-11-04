@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { ADMIN_REFUSED_STATUS, adminStatus, isMacPlatform } from './admin'
+import { ADMIN_REFUSED_STATUS, adminStatus, hasAdminRunner } from './admin'
 
 const MB = 1024 ** 2
 const GB = 1024 ** 3
@@ -20,11 +20,22 @@ describe('administrator measurement status', () => {
     expect(ADMIN_REFUSED_STATUS).toContain('unmeasured')
   })
 
-  test('macOS is detected from the user agent, other platforms are left alone', () => {
-    expect(isMacPlatform('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15')).toBe(
+  // This predicate used to be macOS-only, and the Windows runner was added in Rust
+  // without it: on the 0.1.1 Windows build a partial scan offered no Measure button, so
+  // the whole self-elevation path was unreachable in the shipped product. The predicate
+  // answers "does a runner exist here", which is the question the gate actually asks.
+  test('the affordance follows the runner, which macOS and Windows both ship', () => {
+    expect(hasAdminRunner('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15')).toBe(
       true,
     )
-    expect(isMacPlatform('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toBe(false)
-    expect(isMacPlatform('Mozilla/5.0 (X11; Linux x86_64)')).toBe(false)
+    // A real WebView2 user agent, not a hand-simplified one.
+    expect(
+      hasAdminRunner(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+      ),
+    ).toBe(true)
+    // Linux has no runner yet (the launcher returns Unsupported), so the affordance must
+    // not appear and promise a measurement that cannot happen.
+    expect(hasAdminRunner('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15')).toBe(false)
   })
 })

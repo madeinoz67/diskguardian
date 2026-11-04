@@ -78,8 +78,9 @@ pub struct LaunchOutcome {
     pub stderr: String,
 }
 
-/// How the serving helper is started, given the session's staging directory.
-/// Production on macOS is the osascript administrator dialog; the IPC tests inject a
+/// How the serving process is started, given the session's staging directory.
+/// Production fillers are the osascript administrator dialog on macOS and, on Windows,
+/// a `runas` re-exec of the app binary itself (design §3.7.2); the IPC tests inject a
 /// stand-in that plays the daemon against the same files, so the command can be driven
 /// without a password prompt. The protocol above the launcher (job files in, results
 /// files out) is identical either way, which is what makes a future SMAppService
@@ -468,6 +469,18 @@ fn lock_scans(
         .map_err(|_| "scan state is poisoned by an earlier panic".to_string())
 }
 
+/// Windows ships no sidecar (maintainer ruling, 2026-11-03): elevation re-execs this
+/// binary, so the process the launcher starts is the app itself. The env override
+/// stays uniform across platforms.
+#[cfg(target_os = "windows")]
+fn resolve_helper() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("DISKGUARDIAN_ADMIN_BIN") {
+        return Some(PathBuf::from(path));
+    }
+    std::env::current_exe().ok()
+}
+
+#[cfg(not(target_os = "windows"))]
 fn resolve_helper() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("DISKGUARDIAN_ADMIN_BIN") {
         return Some(PathBuf::from(path));
@@ -607,10 +620,47 @@ fn start_daemon_with_dialog(helper: &Path, dir: &Path) -> io::Result<LaunchOutco
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows self-elevation (design §3.7.2): `helper` here is this binary itself (see
+/// `resolve_helper`), re-executed with the `runas` verb so Windows raises the UAC
+/// consent. The elevated instance takes the pre-Tauri argv branch in `main` and serves
+/// the identical job/results protocol; it initialises no window, webview or command
+/// surface, so no deletion code path is reachable elevated (A1).
+#[cfg(target_os = "windows")]
+fn start_daemon_with_dialog(exe: &Path, dir: &Path) -> io::Result<LaunchOutcome> {
+    // Quoted: a temp path may contain spaces, and an unquoted operand would arrive as
+    // two argv entries — which the classifier refuses (BadUsage, exit 2).
+    let parameters = format!("--dg-admin-serve \"{}\"", dir.display());
+    // The crate documents `ElevateOutcome` as mirroring this type field-for-field, and
+    // this is where the two meet: the app owns its own outcome type, so the mapping is
+    // one line at the seam rather than a shared dependency in the cage crate.
+    let elevated = diskguardian_win_elevate::elevate_serve(exe, &parameters)?;
+    let outcome = LaunchOutcome {
+        success: elevated.success,
+        stderr: elevated.stderr,
+    };
+    if !outcome.success {
+        // A decline lands here: `refusal_message` already words any stderr containing
+        // "cancel" as the refusal the macOS user sees, unchanged.
+        return Ok(outcome);
+    }
+    // `ShellExecuteW`'s return timing relative to the prompt answer is not something
+    // this design trusts, so the ready wait uses the user-paced outer bound, not the
+    // 30-second `READY_WAIT` that suffices after a blocking osascript: a user may
+    // stare at the prompt for minutes, and the elevated process only starts once they
+    // answer (design §3.7.2).
+    if !wait_for_ready(dir, Duration::from_secs(DEADLINE_SECS + OUTER_GRACE_SECS)) {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "the administrator helper did not start after approval",
+        ));
+    }
+    Ok(outcome)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn start_daemon_with_dialog(_helper: &Path, _dir: &Path) -> io::Result<LaunchOutcome> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "administrator measurement is macOS-only for now",
+        "administrator measurement is not available on Linux yet",
     ))
 }
