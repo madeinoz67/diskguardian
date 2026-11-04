@@ -28,8 +28,66 @@ permissions:
   contents: read
 
 jobs:
+  # A tag is a publish, so a tag has to earn it. This runs before anything is built and
+  # refuses a tag that is not a release: `tags: ['v*']` alone would happily publish a
+  # `v-test` on a feature branch, and a tag that disagrees with the version in the tree
+  # would ship a binary labelled something it is not. Dispatched builds carry no tag and
+  # skip this entirely, which is what keeps the build lane usable for verification.
+  guard:
+    name: The tag is a release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: The tag is vX.Y.Z, on main, and agrees with the tree
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag: $TAG"
+
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "refusing: '$TAG' is not a vX.Y.Z release tag"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "version: $VERSION"
+
+          # A tag on an unmerged branch would publish work main has never seen.
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "refusing: $GITHUB_SHA is not an ancestor of origin/main"
+            exit 1
+          fi
+          echo "ancestry: $GITHUB_SHA is on main"
+
+          # The tag IS the version users download, so it must equal every surface the
+          # build stamps. A typo here publishes a binary labelled something it is not.
+          cargo_version="$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
+            | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)"
+          tauri_version="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
+          package_version="$(jq -r .version apps/desktop/package.json)"
+          echo "Cargo.toml workspace: $cargo_version"
+          echo "tauri.conf.json:     $tauri_version"
+          echo "package.json:        $package_version"
+
+          for seen in "$cargo_version" "$tauri_version" "$package_version"; do
+            if [ "$seen" != "$VERSION" ]; then
+              echo "refusing: the tree says '$seen' but the tag says '$VERSION'"
+              exit 1
+            fi
+          done
+          echo "version surfaces agree with the tag"
+
   build:
     name: Bundle (${{ matrix.target }})
+    needs: guard
+    # A skipped `guard` means a dispatched build, which is the lane used to verify the
+    # pipeline without publishing. Only a tag has to pass, so `skipped` must not propagate
+    # as failure here or the dispatch lane stops working.
+    if: always() && (needs.guard.result == 'success' || needs.guard.result == 'skipped')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
