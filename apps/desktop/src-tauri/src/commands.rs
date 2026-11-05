@@ -138,7 +138,14 @@ pub fn home_dir() -> String {
 /// Windows. It also means no external command has to exist.
 #[tauri::command]
 pub fn volumes() -> Vec<VolumeInfo> {
-    let disks = sysinfo::Disks::new_with_refreshed_list();
+    // sysinfo 0.40 made the disk list fallible. On every platform this product ships for
+    // the constructor is infallible in practice (`DisksInner::new` returns `Ok`
+    // unconditionally on macOS), so this arm is defensive rather than expected — but the
+    // IPC shape stays a list, and an unenumerable list renders as no rows rather than as a
+    // fabricated one.
+    let Ok(disks) = sysinfo::Disks::new_with_refreshed_list() else {
+        return Vec::new();
+    };
 
     let mut volumes: Vec<VolumeInfo> = disks
         .iter()
