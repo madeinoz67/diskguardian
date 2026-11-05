@@ -18,8 +18,11 @@
 #   scripts/merge-verified.sh <pr-number>      # repository inferred from the remote
 #   scripts/merge-verified.sh <owner/repo> <pr>
 #
-# The merge is a merge commit (--merge, the house style); the remote branch is NOT
-# deleted — remote deletions take the principal's word.
+# The merge is a SQUASH (--squash, principal's ruling 2026-11-05). The `main` ruleset
+# permits only squash and rebase, so a merge commit is refused outright: "Merge commits
+# are not allowed on this repository". One commit per pull request also reads cleanly
+# next to the generated changelog, which is organised by pull request. The remote branch
+# is NOT deleted — remote deletions take the principal's word.
 #
 # Exits 0 only after merging.
 set -uo pipefail
@@ -96,6 +99,6 @@ pend="$(printf '%s\n' "$rollup" | awk -F'\t' '$2 == "pending" {n++} END {print n
 say "rollup read in full: $total checks, 0 fail, 0 pending — merging"
 
 # --- merge --------------------------------------------------------------------
-gh pr merge "$pr" -R "$repo" --merge ||
+gh pr merge "$pr" -R "$repo" --squash ||
   die "gh pr merge exited non-zero — verify the PR state before retrying"
 say "merged $repo#$pr"
