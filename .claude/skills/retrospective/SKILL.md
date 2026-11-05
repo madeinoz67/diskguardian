@@ -5,8 +5,8 @@ description: >-
   sub-agent review with keep/adjust/scale/retire calls, deviations, a numbered row-call
   table for the principal, and where everything was persisted. Use when a period of work
   closes — a week, a session spanning several increments — and the principal asks for a
-  wrap-up. NOT-FOR: the per-run ISA Log entry at a single increment's close; that is
-  `increment` step 8's job, and this skill harvests those entries later.
+  wrap-up. NOT-FOR: the per-run close record at a single increment's close; that is
+  `increment` step 8's job, and it lands in the pull request — this skill harvests those later.
 ---
 
 # retrospective — the standardized end-of-period report
@@ -22,8 +22,8 @@ stalls" over an invented count is the same lie class as a size that was never me
 ## When to use
 
 When a period closes and the principal asks for a retrospective, a period report, or a wrap-up.
-NOT-FOR: the per-run entry at one increment's close — that is `increment` step 8, and this skill
-harvests those entries later.
+NOT-FOR: the per-run entry at one increment's close — that is `increment` step 8, which writes it
+into the pull request, and this skill harvests those later.
 
 ## The window
 
@@ -56,7 +56,8 @@ into numbers that look sourced.
 
 - `git log --oneline --since "<from>" --until "<to>" main` — the commits, with merges marked.
 - `git log --merges --since … ` — one row per merged increment branch.
-- Claims closed in the window: read `ISA.md`'s Log section, which is where step 8 writes them.
+- Claims closed in the window: `git log -p ISA.md` for the claim headings that went `[x]`, and the
+  pull request bodies that carry the evidence line each tick needs.
 
 ### 2. Process findings — what worked, what did not, with evidence
 
@@ -66,7 +67,7 @@ Three harvest lanes:
   `drained_at`.
 - `.claude/memory-proposals.jsonl` — the undrained queue. Undrained is a disclosure, not a
   failure.
-- `ISA.md` Log entries and fix-wave commit messages, which name the findings they fold.
+- Pull request bodies and fix-wave commit messages, which name the findings they fold.
 
 Narrated additions are permitted, tagged narrated.
 
@@ -74,8 +75,8 @@ Narrated additions are permitted, tagged narrated.
 
 One block per lane dispatched in the period: `increment-designer`, `increment-builder`,
 `adversary`, `mechanism-critic`, `code-reviewer`, `standards-governor`, `perf-measurer`.
-Verdict and finding yield are `[harvested]` from the period's review records and ISA Log
-entries — this section **cites** those records and never re-ledgers them. Dispatch counts and
+Verdict and finding yield are `[harvested]` from the period's review records and pull request
+bodies — this section **cites** those records and never re-ledgers them. Dispatch counts and
 stalls are `[narrated]` or `not recorded` wherever no entry carries them.
 
 Each lane gets **exactly one call — keep / adjust-brief / scale / retire — with the evidence
@@ -126,4 +127,6 @@ Pin counts "as at <the drain receipt's timestamp>" so a verifier re-derives at t
   without falsifiers; a zero-row table without its negation proof.
 - **A report shaped like memory of the window.** Render from sources: a field you cannot source
   reads `not recorded` even when you remember it.
-- **The step-8 pointer dangling.** If this skill moves, `increment` step 8's reference lies.
+- **The step-8 pointer dangling.** The close record now lands in the pull request. `ISA.md`'s Log
+  section was deleted on 2026-11-05 (it duplicated git and the PRs); a reference to it here would
+  point at something that no longer exists.
