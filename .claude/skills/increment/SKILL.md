@@ -77,9 +77,11 @@ privileged path, or a claim in `ISA.md`, run the loop.
    prove things about this machine, and on 2026-11-03 a Windows compile break and an ext4-only
    assertion both reached `main` behind a locally-green report. Every real finding folded or
    deferred by name before the PR opens.
-8. **Run close.** Remove the worktree, delete the merged local branch, and record in the ISA
-   what changed, what was verified and how, and what stayed open. A claim closed on a
-   screenshot says which screenshot. That entry is the raw material for the **`retrospective`**
+8. **Run close.** Remove the worktree, delete the merged local branch, and record **in the pull
+   request** what changed, what was verified and how, and what stayed open. A claim closed on a
+   screenshot says which screenshot. The ISA takes only the claim tick and its evidence line: it
+   is the product's contract, not a diary, and a close narrative copied into it competes with git
+   for history git already holds. The PR body is the raw material for the **`retrospective`**
    skill, which harvests a period's worth of them; do not run a period report at a run close.
 
 ## Traps this repo has already paid for
