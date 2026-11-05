@@ -13,7 +13,14 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "noEmit": true
+    "noEmit": true,
+    // TypeScript 7 stopped picking up `@types/*` implicitly, so the two ambient sets this
+    // project actually relies on are named here. `bun` is `bun:test` and the `Bun` global
+    // the tests use; `vite/client` is what declares `import './style.css'` as a side-effect
+    // import rather than an unresolvable module — TS 7 made that an error (TS2882) where
+    // 5.x let it pass. Naming `types` also switches off implicit inclusion, so anything
+    // else added later has to be listed deliberately.
+    "types": ["bun", "vite/client"]
   },
   "include": ["src"]
 }
