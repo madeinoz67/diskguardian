@@ -43,7 +43,7 @@ jobs:
           - language: javascript-typescript
             build-mode: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No build is run, but the extractor resolves the workspace through cargo, so the
       # toolchain has to be present.
