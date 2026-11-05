@@ -225,11 +225,23 @@ each with a Scan button and a star to remove it again.
 
 ## Status
 
-Early. The core loop works end to end on macOS: scan, draw, drill, collect, delete, and
-administrator measurement of restricted areas.
+Early, but working end to end. Scan, draw, drill, collect, delete, duplicate detection,
+local snapshot reporting and administrator measurement of restricted areas all run.
 
-Not yet: cloud accounts (Dropbox, Drive, OneDrive, Box), APFS local
-snapshots, disk images, network volumes, and restricted-area measurement on Linux.
+| Platform | Artifacts | Restricted-area measurement |
+|---|---|---|
+| macOS | dmg, `.app` zip, Homebrew cask | Yes: one system password dialog per app session |
+| Windows | NSIS installer | Yes, by self-elevation: one UAC prompt per app session |
+| Linux | `.deb`, AppImage | Not available: those areas stay drawn as restricted |
+
+How much of that is proven depends on where. The scanning engine is tested on all three
+platforms on every change; the macOS app has been driven by hand; the Windows app has
+been driven in a virtual machine. The Windows consent prompts are the one arm nothing
+automated can prove, because a CI runner is already elevated and never shows a UAC
+dialog, so those are verified by hand or not at all.
+
+Not yet: cloud accounts (Dropbox, Drive, OneDrive, Box), disk images, and network
+volumes.
 
 ## Licence
 
