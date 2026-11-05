@@ -9,6 +9,8 @@ regenerates it on every merge to `main` and on every release tag.
 ### CI
 
 - Keep the placeholder comment out of the generated cask ([#28](https://github.com/madeinoz67/diskguardian/pull/28)) by @madeinoz67
+- Generate the changelog from merged pull requests, on merge and on every tag ([#29](https://github.com/madeinoz67/diskguardian/pull/29)) by @madeinoz67
+- Squash on merge: the main ruleset refuses merge commits ([#31](https://github.com/madeinoz67/diskguardian/pull/31)) by @madeinoz67
 
 ## [0.1.5] - 2026-11-05
 
