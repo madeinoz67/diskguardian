@@ -59,9 +59,14 @@ pub fn volume_scan_exclusions() -> Vec<PathBuf> {
 /// the same `sysinfo` list the overview builds, so "Scan" on a row and the boundary the
 /// walk applies cannot disagree about what was scanned.
 pub fn is_mount_point(path: &Path) -> bool {
-    sysinfo::Disks::new_with_refreshed_list()
-        .iter()
-        .any(|disk| disk.mount_point() == path)
+    // sysinfo 0.40 made the disk list fallible. An unenumerable list means the mount point
+    // cannot be confirmed, and "cannot be confirmed" is not a volume: the caller treats it
+    // as an ordinary directory, which is the answer that cannot invent a hidden-space
+    // petal from a failed read.
+    let Ok(disks) = sysinfo::Disks::new_with_refreshed_list() else {
+        return false;
+    };
+    disks.iter().any(|disk| disk.mount_point() == path)
 }
 
 /// The volume's used space from statfs arithmetic alone:
@@ -107,6 +112,7 @@ pub fn volume_used(mount: &Path) -> Option<u64> {
         // Windows: `GetDiskFreeSpaceEx`'s available-to-caller has no purgeable pool
         // behind it, so sysinfo's figure is the honest one there.
         sysinfo::Disks::new_with_refreshed_list()
+            .ok()?
             .iter()
             .find(|disk| disk.mount_point() == mount)
             .and_then(|disk| disk.total_space().checked_sub(disk.available_space()))
