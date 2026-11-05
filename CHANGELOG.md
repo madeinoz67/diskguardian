@@ -6,6 +6,10 @@ regenerates it on every merge to `main` and on every release tag.
 
 ## [Unreleased]
 
+### Documentation
+
+- Say what actually ships in Status, and how much of it is proven ([#30](https://github.com/madeinoz67/diskguardian/pull/30)) by @madeinoz67
+
 ### CI
 
 - Keep the placeholder comment out of the generated cask ([#28](https://github.com/madeinoz67/diskguardian/pull/28)) by @madeinoz67
