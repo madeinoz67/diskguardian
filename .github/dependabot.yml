@@ -1,0 +1,39 @@
+version: 2
+
+# Three ecosystems, because this repository has three dependency surfaces: a Rust
+# workspace, a Bun frontend, and the actions its workflows call. The two that needed a
+# decision carry their reason here; the reason matters more than the schedule, since a
+# bump that arrives red every week is a lane everyone learns to ignore.
+
+updates:
+  # Rust. One workspace, one Cargo.lock at the root, so cargo moves Cargo.toml and the
+  # lockfile together — which is the only shape that keeps a `--locked` build honest.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # CodeQL requires `init` and `analyze` at the SAME version. Bumped separately
+      # (which is the default behaviour) the workflow half-moves and the run ends in
+      # "CodeQL job status was configuration error" — a split bump is structurally
+      # unmergeable, since neither half is green alone and merging one reds main. Group
+      # them so they always move together.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
+
+  # Bun, not npm. The npm engine cannot rewrite `bun.lock`, so every npm bump arrives
+  # with a manifest whose lockfile no longer matches and `bun install --frozen-lockfile`
+  # rejects it — the PR is red for a reason that has nothing to do with the dependency.
+  # The bun engine edits package.json and bun.lock in the same pull request. The lockfile
+  # here is `lockfileVersion` 1, which is the shape that engine reads; if these PRs ever
+  # stop arriving, check that the lockfile version did not move first.
+  - package-ecosystem: bun
+    directory: /apps/desktop
+    schedule:
+      interval: weekly
