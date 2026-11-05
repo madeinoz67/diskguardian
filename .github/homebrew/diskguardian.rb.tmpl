@@ -2,7 +2,11 @@
 # .github/workflows/release.yml on every tag. The copy in madeinoz67/homebrew-tap is
 # generated output: edit this file, never that one.
 #
-# Placeholders substituted at release time: __VER__, __SHA_ARM__, __SHA_INTEL__.
+# At release time the `tap` job substitutes three values into this file: the version,
+# and one sha256 per architecture. They are written below as placeholders, and the
+# substitution is a plain `sed` over the whole file — so a placeholder written in a
+# comment gets replaced too. That is why this comment describes them instead of naming
+# them, and the first rendered cask (v0.1.5) is the evidence for the rule.
 #
 # A cask, not a formula. The other tools in this tap are CLI binaries and belong in
 # Formula/, but DiskGuardian is a GUI application shipped as a .app inside a dmg. A
