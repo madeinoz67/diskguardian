@@ -51,6 +51,16 @@ cannot collide with any other asset:
 | Windows (x86_64) | `DiskGuardian-x86_64-pc-windows-msvc-setup.exe` (NSIS installer) |
 | Linux (x86_64) | `DiskGuardian-x86_64-unknown-linux-gnu.deb`, `DiskGuardian-x86_64-unknown-linux-gnu.AppImage` |
 
+On macOS the app is also in a Homebrew tap:
+
+```bash
+brew install --cask madeinoz67/tap/diskguardian
+```
+
+The cask is regenerated on every tag from the dmg that release published, so its
+checksum and the file you download cannot drift apart. It is unsigned like the direct
+download, so the Gatekeeper note below applies to it as well.
+
 Nothing is signed (no signing identity yet). macOS quarantines the download —
 right-click the app and choose Open, or run
 `xattr -dr com.apple.quarantine /Applications/DiskGuardian.app`. Windows SmartScreen
