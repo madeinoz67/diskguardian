@@ -19,7 +19,7 @@ jobs:
         # The engine is the portable half of the product, so it is proven on all three.
         os: [macos-latest, ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -99,7 +99,7 @@ jobs:
       run:
         working-directory: apps/desktop
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The claim check compares against the base commit, so the base object has to be
           # present; a shallow clone cannot show it.
