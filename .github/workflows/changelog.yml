@@ -1,0 +1,100 @@
+name: Changelog
+
+# CHANGELOG.md is generated, never edited. This workflow is the only thing that writes
+# it, and it writes it from the same source every time: merged pull requests, grouped by
+# the prefix of the branch that carried each one.
+#
+# Two triggers, because the file has two jobs:
+#
+#   push to main — keep `[Unreleased]` current, so the changelog describes the tree you
+#                  are looking at rather than the last release.
+#   v* tag       — fold that version into its own dated section, with the authors whose
+#                  first contribution landed in it.
+#
+# Committing here needs a token that can push to `main` past its own protection rule.
+# `GITHUB_TOKEN` cannot, which is why this runs as a GitHub App (the same App the other
+# repositories use) rather than as the workflow token. Until the App is wired the job
+# warns and exits green: a missing credential is a gap someone can close, not a broken
+# build.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    # A push that only moves CHANGELOG.md is this workflow's own commit. Path filters are
+    # not evaluated for tag pushes, so this only guards the main-branch case — the `[skip ci]`
+    # in the commit message is the belt to this braces.
+    paths-ignore:
+      - CHANGELOG.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialise: two merges seconds apart must not race to write the same file, and a
+# cancelled regeneration would push a changelog that omits one of them.
+concurrency:
+  group: changelog
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    name: Regenerate CHANGELOG.md
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check the changelog app wiring
+        id: wiring
+        run: |
+          if [ -z "${{ vars.CHANGELOG_APP_ID }}" ]; then
+            echo "::warning::CHANGELOG_APP_ID is not set — skipping the changelog. Register the app, install it on this repository, add it to main's bypass list, and set CHANGELOG_APP_ID + CHANGELOG_APP_PRIVATE_KEY."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create changelog app token
+        if: steps.wiring.outputs.ready == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CHANGELOG_APP_ID }}
+          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@v7
+        if: steps.wiring.outputs.ready == 'true'
+        with:
+          # Tags are the boundaries the release windows are cut on, so their commits and
+          # dates have to be present.
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Frontend toolchain
+        if: steps.wiring.outputs.ready == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Regenerate
+        if: steps.wiring.outputs.ready == 'true'
+        env:
+          # `gh` reads this; the script lists merged pull requests through it, which is
+          # also why the token needs read access to pull requests.
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bun run scripts/changelog.ts
+
+      - name: Commit and push
+        if: steps.wiring.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "CHANGELOG.md is already current; nothing to push"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          # `[skip ci]`: the changelog commit should not start a full engine matrix or a
+          # second CodeQL scan. Nothing in it can break either one.
+          git commit -m "changelog: regenerate [skip ci]"
+          git push
