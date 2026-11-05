@@ -161,8 +161,12 @@ pub fn parse_listing(stdout: &str) -> Vec<LocalSnapshot> {
 }
 
 /// Free space on the boot volume, measured now.
+///
+/// sysinfo 0.40 made the disk list fallible; this function already returned `Option`, so a
+/// failed enumeration is the same answer as a missing boot volume: no measurement. The
+/// purge report distinguishes that from a real zero by comparing two of these.
 fn free_bytes() -> Option<u64> {
-    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let disks = sysinfo::Disks::new_with_refreshed_list().ok()?;
     disks
         .iter()
         .filter(|disk| disk.mount_point() == std::path::Path::new(BOOT_VOLUME))
