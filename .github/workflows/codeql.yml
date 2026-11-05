@@ -1,0 +1,67 @@
+name: CodeQL
+
+# Static analysis of the two languages this product is actually written in: the Rust
+# engine and Tauri shell, and the TypeScript sunburst.
+#
+# Rust runs in build mode `none`. The app crate's build script is `tauri_build::build()`,
+# which validates a staged sidecar and a built frontend — neither of which exists in a
+# scanner's checkout, and a scanner must not inherit the release pipeline's preconditions
+# to look at the source. `none` extracts with rust-analyzer and never runs that build.
+#
+# `@v4` rather than a commit SHA, for both steps, on purpose: a moving tag keeps `init`
+# and `analyze` on the same CodeQL version by construction. Pinned SHAs would let
+# Dependabot half-move the pair, and a split bump ends in "CodeQL job status was
+# configuration error" — the pair is grouped in .github/dependabot.yml for the same
+# reason.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, off the hour and off the day the other workflows run. A new CodeQL release
+    # or a new query is how an already-merged commit becomes a finding, so the default
+    # branch is rescanned even when nothing is being pushed.
+    - cron: "17 3 * * 4"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # The results go to code scanning, which is free on a public repository.
+      security-events: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      # No build is run, but the extractor resolves the workspace through cargo, so the
+      # toolchain has to be present.
+      - name: Rust toolchain
+        if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # security-extended over the defaults: this application deletes files, so the
+          # extra path-handling and race queries are worth their false positives. A
+          # finding that is noise is cheaper than a deletion that should not have run.
+          queries: security-extended
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
