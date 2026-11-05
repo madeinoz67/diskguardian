@@ -88,6 +88,15 @@ cd apps/desktop && bun run tauri:build   # the bundle
   merge without them, and three independent review passes then found sixteen findings,
   including a fix that did not fix its own defect. Gates prove it compiles; they never try
   to break it.
+- **Dependency and tooling maintenance produces no ISA delta** (principal, 2026-11-05). The
+  ISA is the product's contract: claims, anti-claims, and the handful of decisions the code
+  cannot express. A version bump, or even a bump that needs an adapter to a changed API,
+  proves itself in CI and explains itself in its pull request. Copying that into Decisions
+  makes the record compete with git for the same history, and git wins every time, because
+  git cannot be wrong about what happened. A run that only moved dependencies closes with
+  no ISA edit and says so, rather than inventing an entry to satisfy a freshness gate.
+  The test for a real decision entry: if the code can express it, it belongs in the code;
+  if a pull request can express it, it belongs in the pull request.
 
 ## Memory
 
