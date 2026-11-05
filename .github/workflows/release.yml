@@ -1,6 +1,6 @@
 name: Release
 
-# Two lanes on purpose:
+# Three lanes on purpose:
 #
 #   build   — runs on every dispatch and every tag, publishes nothing. It produces the
 #             per-platform bundles and asserts they contain what they must, so the
@@ -8,6 +8,9 @@ name: Release
 #   release — tags only. Takes the artifacts the build lane produced and publishes them as
 #             the release. Nothing here rebuilds, so what ships is what was verified, and
 #             publication is asserted from the API afterwards rather than assumed.
+#   tap     — tags only, after the release. Renders the Homebrew cask from the same
+#             artifacts and pushes it to the tap repository, so a `brew install --cask`
+#             never points at a checksum that was computed from something else.
 #
 # Four legs, one per target triple (multi-platform release design §3.1, amended
 # 2026-11-03): macOS arm64 + x86_64, Windows x86_64 (NSIS, app binary ONLY — no
@@ -657,3 +660,71 @@ jobs:
           draft="$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft')"
           echo "draft: $draft"
           [ "$draft" = "false" ] || { echo "the release is still a draft"; exit 1; }
+
+  # The cask is generated from the same artifacts the release lane just published, so the
+  # checksums a user verifies are computed from the bytes on the release page rather than
+  # from anything rebuilt here. Tag-only: a dispatch build that publishes nothing has no
+  # cask to bump, and a cask naming an unreleased version would 404.
+  tap:
+    name: Bump the Homebrew tap
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7 # for the cask template at .github/homebrew/
+
+      - name: Download the bundles (for the two dmg checksums)
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Deliberately NOT `continue-on-error`. A missing token is handled in the script
+      # below, where it is a warning and a green job, because a release that shipped
+      # without its cask is a gap someone can fix by adding the secret. A *failure* here
+      # is different: the release is already published, so the run should go red and say
+      # the cask is stale. `continue-on-error` would hide both cases behind one colour.
+      - name: Render Casks/diskguardian.rb and push to madeinoz67/homebrew-tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew cask bump. Add a PAT with contents:write on madeinoz67/homebrew-tap as the HOMEBREW_TAP_TOKEN repo secret to enable it."
+            exit 0
+          fi
+
+          ver="${VERSION#v}"
+
+          # Found, not globbed: `download-artifact` preserves the workspace path, so the
+          # dmg sits some levels below dist/ and the depth is not this job's business.
+          dmg_arm="$(find dist -name "DiskGuardian_${ver}_aarch64.dmg" -type f | head -1)"
+          dmg_intel="$(find dist -name "DiskGuardian_${ver}_x64.dmg" -type f | head -1)"
+          for dmg in "$dmg_arm" "$dmg_intel"; do
+            [ -n "$dmg" ] || { echo "a dmg for ${ver} is missing from the artifacts"; exit 1; }
+          done
+
+          sha_arm="$(sha256sum "$dmg_arm" | awk '{print $1}')"
+          sha_intel="$(sha256sum "$dmg_intel" | awk '{print $1}')"
+          echo "aarch64 ${sha_arm}"
+          echo "x64     ${sha_intel}"
+
+          sed -e "s/__VER__/${ver}/" \
+              -e "s/__SHA_ARM__/${sha_arm}/" \
+              -e "s/__SHA_INTEL__/${sha_intel}/" \
+              .github/homebrew/diskguardian.rb.tmpl > /tmp/diskguardian.rb
+
+          # Syntax-check before it leaves this runner. A cask that does not parse breaks
+          # `brew tap` for the user, and the tap repository has no CI to catch it.
+          ruby -c /tmp/diskguardian.rb
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/madeinoz67/homebrew-tap" tap
+          mkdir -p tap/Casks
+          mv /tmp/diskguardian.rb tap/Casks/diskguardian.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/diskguardian.rb
+          git commit -m "diskguardian ${VERSION}" || echo "cask already at ${VERSION}; nothing to push"
+          git push
